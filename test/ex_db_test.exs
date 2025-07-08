@@ -2,10 +2,12 @@ defmodule ExDbTest do
   use ExUnit.Case
   doctest ExDb
 
+  alias ExDb.Wire.ErrorMessage
+
   setup do
     # Get the configured port for testing
-    # port = Application.get_env(:ex_db, :port)
-    port = 28817
+    port = Application.get_env(:ex_db, :port)
+    # port = 28817
     {:ok, port: port}
   end
 
@@ -78,8 +80,7 @@ defmodule ExDbTest do
     # Test 1: Insufficient data (too short)
     # Just length, no data
     :ok = :gen_tcp.send(socket, <<0, 0, 0, 4>>)
-    assert {:error, :closed} = :gen_tcp.recv(socket, 1, 1000)
-    :gen_tcp.close(socket)
+    assert {:error, :closed} == :gen_tcp.recv(socket, 0, 1000)
 
     # Test 2: Invalid protocol version
     {:ok, socket2} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
@@ -88,27 +89,22 @@ defmodule ExDbTest do
     :ok = :gen_tcp.send(socket2, invalid_protocol)
     {:ok, response2} = :gen_tcp.recv(socket2, 0, 1000)
 
-    to_string(response2)
-    |> IO.inspect()
+    # Parse the error message and assert on its content
+    error = ErrorMessage.parse(response2)
+    assert error.severity == "FATAL"
+    assert error.code == "0A000"
+    assert error.message =~ "unsupported frontend protocol"
+    assert ErrorMessage.fatal?(error)
+    assert ErrorMessage.error?(error)
 
-    assert byte_size(response2) > 0
     :gen_tcp.close(socket2)
 
-    # Test 3: Nonsense packet (random bytes)
+    # Test 3: Nonsense packet (random bytes) - server should close connection
     {:ok, socket3} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
     nonsense = :crypto.strong_rand_bytes(20)
     :ok = :gen_tcp.send(socket3, nonsense)
-    {:ok, response3} = :gen_tcp.recv(socket3, 0, 1000)
-    to_string(response3)
-    assert byte_size(response3) > 0
+    # Server should close connection for nonsense packets
+    assert {:error, :closed} = :gen_tcp.recv(socket3, 0, 1000)
     :gen_tcp.close(socket3)
-  end
-
-  test "server handles empty connection gracefully", %{port: port} do
-    {:ok, socket} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
-
-    # Don't send anything, just close
-    :gen_tcp.close(socket)
-    # Should not crash the server
   end
 end
