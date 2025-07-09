@@ -3,6 +3,8 @@ defmodule ExDb.Server do
 
   alias ExDb.Wire.Protocol
 
+  require Logger
+
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
@@ -27,7 +29,7 @@ defmodule ExDb.Server do
   defp handle_client(socket) do
     case Protocol.handle_startup(socket) do
       {:ok, _params} ->
-        # Keep connection open for queries (we'll implement this next)
+        # Keep connection open for queries
         handle_queries(socket)
 
       {:error, :invalid_protocol, _protocol_version} ->
@@ -41,8 +43,19 @@ defmodule ExDb.Server do
   end
 
   defp handle_queries(socket) do
-    # For now, just close the connection
-    # We'll implement query handling in the next step
-    :gen_tcp.close(socket)
+    case Protocol.handle_query(socket) do
+      :ok ->
+        # Query handled successfully, continue listening for more queries
+        handle_queries(socket)
+
+      {:error, :closed} ->
+        Logger.info("Client closed connection")
+        # Client closed connection
+        :ok
+
+      {:error, :malformed} ->
+        # Malformed query: close the connection
+        :gen_tcp.close(socket)
+    end
   end
 end

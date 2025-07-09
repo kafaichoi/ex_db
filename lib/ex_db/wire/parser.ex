@@ -72,6 +72,22 @@ defmodule ExDb.Wire.Parser do
   end
 
   @doc """
+  Parse a query message from the client.
+  Returns {:ok, query_string} or {:error, reason}
+  """
+  def parse_query_message(data) do
+    case data do
+      <<?Q, length::32, rest::binary>> when length >= 5 ->
+        # Remove null terminator
+        query = String.slice(rest, 0, byte_size(rest) - 1)
+        {:ok, query}
+
+      _ ->
+        {:error, :invalid_query_message}
+    end
+  end
+
+  @doc """
   Extract specific parameters from startup data.
   """
   def extract_parameter(data, key) do

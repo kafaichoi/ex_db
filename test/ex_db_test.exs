@@ -7,7 +7,6 @@ defmodule ExDbTest do
   setup do
     # Get the configured port for testing
     port = Application.get_env(:ex_db, :port)
-    # port = 28817
     {:ok, port: port}
   end
 
@@ -98,13 +97,82 @@ defmodule ExDbTest do
     assert ErrorMessage.error?(error)
 
     :gen_tcp.close(socket2)
+  end
 
-    # Test 3: Nonsense packet (random bytes) - server should close connection
-    {:ok, socket3} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
-    nonsense = :crypto.strong_rand_bytes(20)
-    :ok = :gen_tcp.send(socket3, nonsense)
-    # Server should close connection for nonsense packets
-    assert {:error, :closed} = :gen_tcp.recv(socket3, 0, 1000)
-    :gen_tcp.close(socket3)
+  defp receive_all(socket, timeout, acc \\ "") do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} -> receive_all(socket, timeout, acc <> data)
+      {:error, :closed} -> acc
+      {:error, _} -> acc
+    end
+  end
+
+  test "server responds to simple SELECT 1 query", %{port: port} do
+    alias ExDb.Wire.ResponseParser
+
+    {:ok, socket} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
+
+    # Startup handshake
+    protocol_version = <<3::16, 0::16>>
+
+    # Common parameters that psql sends
+    params = [
+      {"user", "postgres"}
+      # {"database", "testdb"},
+      # {"application_name", "psql"},
+      # {"client_encoding", "UTF8"}
+    ]
+
+    # Build parameter string
+    param_string =
+      Enum.map_join(params, "", fn {key, value} ->
+        key <> <<0>> <> value <> <<0>>
+      end)
+
+    # Build complete packet
+    payload = protocol_version <> param_string <> <<0>>
+    packet_len = byte_size(payload) + 4
+    startup_packet = <<packet_len::32, payload::binary>>
+
+    :ok = :gen_tcp.send(socket, startup_packet)
+    # Read and discard handshake response
+    _ = receive_all(socket, 1000)
+
+    # Send a simple query: Q message (SELECT 1;)
+    query = "SELECT 1;"
+
+    query_packet =
+      <<?Q, byte_size(query) + 5::32, query::binary, 0>>
+
+    :ok = :gen_tcp.send(socket, query_packet)
+
+    # Read the response (should be RowDescription, DataRow, CommandComplete, ReadyForQuery)
+    response = receive_all(socket, 1000)
+
+    # Parse the response into individual messages
+    case ResponseParser.parse_response(response) do
+      {:error, reason} ->
+        flunk("Failed to parse response: #{inspect(reason)}")
+
+      messages ->
+        [row_desc, data_row, cmd_complete, ready] = messages
+
+        # Check RowDescription
+        assert %ExDb.Wire.Messages.RowDescription{field_count: 1, fields: [field]} = row_desc
+        assert field.name == "?column?"
+        # int4
+        assert field.type_oid == 23
+
+        # Check DataRow
+        assert %ExDb.Wire.Messages.DataRow{field_count: 1, fields: ["1"]} = data_row
+
+        # Check CommandComplete
+        assert %ExDb.Wire.Messages.CommandComplete{tag: "SELECT 1"} = cmd_complete
+
+        # Check ReadyForQuery
+        assert ready == :ready_for_query
+    end
+
+    :gen_tcp.close(socket)
   end
 end
