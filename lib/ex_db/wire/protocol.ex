@@ -31,7 +31,6 @@ defmodule ExDb.Wire.Protocol do
       {:error, :invalid_length} ->
         # Malformed/insufficient data: just return error (no error message sent)
         {:error, :malformed}
-
     end
   end
 
@@ -44,6 +43,10 @@ defmodule ExDb.Wire.Protocol do
       {:ok, %{type: ?Q, data: data}} ->
         process_query(socket, data)
 
+      {:ok, %{type: ?X, data: _data}} ->
+        # Terminate message: client wants to close connection
+        {:error, :closed}
+
       {:error, :closed} ->
         {:error, :closed}
 
@@ -54,9 +57,9 @@ defmodule ExDb.Wire.Protocol do
   end
 
   defp read_normal_message(socket) do
-    case :gen_tcp.recv(socket, 5) do
+    case :gen_tcp.recv(socket, 5, 5000) do
       {:ok, <<type, length::32>>} ->
-        case :gen_tcp.recv(socket, length - 5) do
+        case :gen_tcp.recv(socket, length - 5, 5000) do
           {:ok, data} ->
             {:ok, %{type: type, data: data}}
 
@@ -66,6 +69,9 @@ defmodule ExDb.Wire.Protocol do
 
       {:error, :closed} = err ->
         err
+
+      {:error, :timeout} ->
+        {:error, :malformed}
     end
   end
 
@@ -100,7 +106,9 @@ defmodule ExDb.Wire.Protocol do
 
       _ ->
         # For now, send an error for unknown queries
-        send_error(socket, "query not supported: #{query}")
+        send_error(socket, "query not supported: #{query}", "ERROR")
+        send_ready_for_query(socket)
+        :ok
     end
   end
 

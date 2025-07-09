@@ -38,3 +38,11 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at <https://hexdocs.pm/ex_db>.
 
+## Wire Protocol 3.0
+Startup Packet start with the length followed by the protocol version.
+|int32 len|int32 protocol|payload|
+|int32 len|int32 protocol|str name|\0|str value|\0|
+All other message start with an ASCII identifier, followed by length and payload
+|char tag|int32 len|payload|
+
+

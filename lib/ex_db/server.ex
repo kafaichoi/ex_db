@@ -46,6 +46,7 @@ defmodule ExDb.Server do
     case Protocol.handle_query(socket) do
       :ok ->
         # Query handled successfully, continue listening for more queries
+        Logger.info("Query handled successfully, continuing...")
         handle_queries(socket)
 
       {:error, :closed} ->
@@ -55,6 +56,7 @@ defmodule ExDb.Server do
 
       {:error, :malformed} ->
         # Malformed query: close the connection
+        Logger.info("Malformed query received, closing connection")
         :gen_tcp.close(socket)
     end
   end
