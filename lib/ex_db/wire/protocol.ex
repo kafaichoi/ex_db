@@ -54,9 +54,9 @@ defmodule ExDb.Wire.Protocol do
   end
 
   defp read_normal_message(socket) do
-    case :gen_tcp.recv(socket, 5, 5_000) do
+    case :gen_tcp.recv(socket, 5) do
       {:ok, <<type, length::32>>} ->
-        case :gen_tcp.recv(socket, length - 5, 5_000) do
+        case :gen_tcp.recv(socket, length - 5) do
           {:ok, data} ->
             {:ok, %{type: type, data: data}}
 

@@ -48,8 +48,8 @@ defmodule ExDb.Wire.Parser do
   Read a complete packet from the socket.
   Returns {:ok, data} or {:error, reason}
   """
-  def read_packet(socket, timeout \\ 1000) do
-    case :gen_tcp.recv(socket, 4, timeout) do
+  def read_packet(socket) do
+    case :gen_tcp.recv(socket, 4) do
       {:ok, <<length::32>>} ->
         if length < 8 do
           # Minimum valid startup packet is 8 bytes (length + protocol)
@@ -57,7 +57,7 @@ defmodule ExDb.Wire.Parser do
         else
           data_length = length - 4
 
-          case :gen_tcp.recv(socket, data_length, timeout) do
+          case :gen_tcp.recv(socket, data_length) do
             {:ok, data} ->
               {:ok, data}
 
