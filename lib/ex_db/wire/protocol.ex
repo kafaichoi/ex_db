@@ -39,19 +39,25 @@ defmodule ExDb.Wire.Protocol do
   Returns {:ok, query} on success, {:error, reason} on failure.
   """
   def handle_query(socket) do
+    require Logger
+
     case read_normal_message(socket) do
       {:ok, %{type: ?Q, data: data}} ->
+        Logger.info("Received query message (Q), processing...")
         process_query(socket, data)
 
       {:ok, %{type: ?X, data: _data}} ->
         # Terminate message: client wants to close connection
+        Logger.info("Received terminate message (X), closing connection")
         {:error, :closed}
 
       {:error, :closed} ->
+        Logger.info("Socket closed while reading query")
         {:error, :closed}
 
-      {:error, _reason} ->
+      {:error, reason} ->
         # Read error: just return error (no error message sent)
+        Logger.warning("Failed to read query message: #{inspect(reason)}")
         {:error, :malformed}
     end
   end
@@ -79,8 +85,13 @@ defmodule ExDb.Wire.Protocol do
   Send a response to a SELECT 1 query.
   """
   def process_query(socket, query) do
-    case String.trim(query) do
+    query_trimmed = String.trim(query)
+    require Logger
+    Logger.info("Processing query: #{inspect(query_trimmed)}")
+
+    case query_trimmed do
       "SELECT 1;" ->
+        Logger.info("Executing supported query: SELECT 1")
         # Send RowDescription, DataRow, CommandComplete, ReadyForQuery
         for msg <- [
               Messages.row_description([
@@ -106,7 +117,8 @@ defmodule ExDb.Wire.Protocol do
 
       _ ->
         # For now, send an error for unknown queries
-        send_error(socket, "query not supported: #{query}", "ERROR")
+        Logger.warning("Unsupported query received: #{inspect(query_trimmed)}")
+        send_error(socket, "query not supported: #{query_trimmed}", "ERROR")
         send_ready_for_query(socket)
         :ok
     end

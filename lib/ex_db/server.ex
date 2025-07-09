@@ -27,37 +27,52 @@ defmodule ExDb.Server do
   end
 
   defp handle_client(socket) do
-    case Protocol.handle_startup(socket) do
-      {:ok, _params} ->
-        # Keep connection open for queries
-        handle_queries(socket)
+    {:ok, {address, port}} = :inet.peername(socket)
+    client_info = "#{:inet_parse.ntoa(address)}:#{port}"
+    Logger.info("New connection from #{client_info}")
 
-      {:error, :invalid_protocol, _protocol_version} ->
+    case Protocol.handle_startup(socket) do
+      {:ok, params} ->
+        Logger.info(
+          "Connection #{client_info} authenticated successfully with params: #{inspect(params)}"
+        )
+
+        # Keep connection open for queries
+        handle_queries(socket, client_info)
+
+      {:error, :invalid_protocol, protocol_version} ->
+        Logger.warning(
+          "Connection #{client_info} failed: invalid protocol version #{inspect(protocol_version)}"
+        )
+
         # Error response was already sent, just close the connection
         :gen_tcp.close(socket)
+        Logger.info("Connection #{client_info} terminated due to protocol error")
 
       {:error, :malformed} ->
+        Logger.warning("Connection #{client_info} failed: malformed startup packet")
         # Malformed packet: just close the connection (no error message sent)
         :gen_tcp.close(socket)
+        Logger.info("Connection #{client_info} terminated due to malformed packet")
     end
   end
 
-  defp handle_queries(socket) do
+  defp handle_queries(socket, client_info) do
     case Protocol.handle_query(socket) do
       :ok ->
         # Query handled successfully, continue listening for more queries
-        Logger.info("Query handled successfully, continuing...")
-        handle_queries(socket)
+        handle_queries(socket, client_info)
 
       {:error, :closed} ->
-        Logger.info("Client closed connection")
+        Logger.info("Connection #{client_info} closed by client")
         # Client closed connection
         :ok
 
       {:error, :malformed} ->
         # Malformed query: close the connection
-        Logger.info("Malformed query received, closing connection")
+        Logger.warning("Connection #{client_info} closed due to malformed query")
         :gen_tcp.close(socket)
+        Logger.info("Connection #{client_info} terminated")
     end
   end
 end
