@@ -132,8 +132,8 @@ defmodule ExDb.Wire.Messages do
   end
 
   def parameter_status(name, value) do
-    data = "S" <> name <> <<0>> <> value <> <<0>>
-    <<"S", byte_size(data) + 4::32, name::binary, 0, value::binary, 0>>
+    data = name <> <<0>> <> value <> <<0>>
+    <<"S", byte_size(data) + 4::32, data::binary>>
   end
 
   def backend_key_data do
