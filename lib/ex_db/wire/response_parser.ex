@@ -4,6 +4,7 @@ defmodule ExDb.Wire.ResponseParser do
   """
 
   alias ExDb.Wire.Messages.{RowDescription, DataRow, CommandComplete}
+  alias ExDb.Wire.ErrorMessage
 
   @doc """
   Parse a complete response stream into individual messages.
@@ -68,6 +69,13 @@ defmodule ExDb.Wire.ResponseParser do
     {:ok, :ready_for_query}
   end
 
+  defp parse_message_by_type(?E, data) do
+    case ErrorMessage.parse(<<"E", byte_size(data) + 4::32, data::binary>>) do
+      %ErrorMessage{} = error_msg -> {:ok, error_msg}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp parse_message_by_type(type, _data) do
     {:error, {:unknown_message_type, type}}
   end
@@ -88,6 +96,7 @@ defmodule ExDb.Wire.ResponseParser do
   defp message_type?(%RowDescription{}, :row_description), do: true
   defp message_type?(%DataRow{}, :data_row), do: true
   defp message_type?(%CommandComplete{}, :command_complete), do: true
+  defp message_type?(%ErrorMessage{}, :error_response), do: true
   defp message_type?(:ready_for_query, :ready_for_query), do: true
   defp message_type?(_, _), do: false
 end
