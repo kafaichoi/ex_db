@@ -41,6 +41,7 @@ defmodule ExDb.SQL.Tokenizer do
       {:ok, value, remaining} ->
         token = %Token{type: :string, value: value}
         do_tokenize(remaining, [token | acc])
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -74,20 +75,18 @@ defmodule ExDb.SQL.Tokenizer do
       {:ok, value, remaining} ->
         token = %Token{type: :number, value: value}
         do_tokenize(remaining, [token | acc])
+
       {:error, reason} ->
         {:error, reason}
     end
   end
 
   # Identifiers and keywords
-  defp do_tokenize(<<char, _::binary>> = input, acc) when char in ?a..?z or char in ?A..?Z or char == ?_ do
-    case extract_identifier(input, "") do
-      {:ok, value, remaining} ->
-        token = %Token{type: token_type_for_word(value), value: normalize_keyword(value)}
-        do_tokenize(remaining, [token | acc])
-      {:error, reason} ->
-        {:error, reason}
-    end
+  defp do_tokenize(<<char, _::binary>> = input, acc)
+       when char in ?a..?z or char in ?A..?Z or char == ?_ do
+    {value, remaining} = extract_identifier(input, "")
+    token = %Token{type: token_type_for_word(value), value: normalize_keyword(value)}
+    do_tokenize(remaining, [token | acc])
   end
 
   # Invalid characters
@@ -119,12 +118,13 @@ defmodule ExDb.SQL.Tokenizer do
   end
 
   # Extract identifier
-  defp extract_identifier(<<char, rest::binary>>, acc) when char in ?a..?z or char in ?A..?Z or char in ?0..?9 or char == ?_ do
+  defp extract_identifier(<<char, rest::binary>>, acc)
+       when char in ?a..?z or char in ?A..?Z or char in ?0..?9 or char == ?_ do
     extract_identifier(rest, acc <> <<char>>)
   end
 
   defp extract_identifier(input, acc) do
-    {:ok, acc, input}
+    {acc, input}
   end
 
   # Determine token type for single character

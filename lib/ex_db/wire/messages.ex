@@ -22,7 +22,7 @@ defmodule ExDb.Wire.Messages do
 
     defp parse_fields(data, count, acc) do
       case parse_field(data) do
-        {field, rest} -> parse_fields(rest, count - 1, [field | acc])
+        {:ok, {field, rest}} -> parse_fields(rest, count - 1, [field | acc])
         _ -> {:error, :invalid_field}
       end
     end
@@ -43,7 +43,7 @@ defmodule ExDb.Wire.Messages do
                 format_code: format_code
               }
 
-              {field, rest2}
+              {:ok, {field, rest2}}
 
             _ ->
               {:error, :invalid_field_data}

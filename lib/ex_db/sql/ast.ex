@@ -3,19 +3,6 @@ defmodule ExDb.SQL.AST do
   Abstract Syntax Tree definitions for SQL statements.
   """
 
-  defmodule SelectStatement do
-    @moduledoc """
-    Represents a SELECT statement.
-    """
-    defstruct [:columns, :from, :where]
-
-    @type t :: %__MODULE__{
-      columns: [Column.t()],
-      from: Table.t(),
-      where: BinaryExpression.t() | nil
-    }
-  end
-
   defmodule Column do
     @moduledoc """
     Represents a column reference in a SELECT statement.
@@ -23,8 +10,8 @@ defmodule ExDb.SQL.AST do
     defstruct [:name]
 
     @type t :: %__MODULE__{
-      name: String.t()
-    }
+            name: String.t()
+          }
   end
 
   defmodule Table do
@@ -34,8 +21,8 @@ defmodule ExDb.SQL.AST do
     defstruct [:name]
 
     @type t :: %__MODULE__{
-      name: String.t()
-    }
+            name: String.t()
+          }
   end
 
   defmodule Literal do
@@ -47,9 +34,9 @@ defmodule ExDb.SQL.AST do
     @type literal_type :: :string | :number | :boolean
 
     @type t :: %__MODULE__{
-      type: literal_type(),
-      value: any()
-    }
+            type: literal_type(),
+            value: any()
+          }
   end
 
   defmodule BinaryExpression do
@@ -62,10 +49,23 @@ defmodule ExDb.SQL.AST do
     @type operand :: Column.t() | Literal.t() | BinaryExpression.t()
 
     @type t :: %__MODULE__{
-      left: operand(),
-      operator: String.t(),
-      right: operand()
-    }
+            left: operand(),
+            operator: String.t(),
+            right: operand()
+          }
+  end
+
+  defmodule SelectStatement do
+    @moduledoc """
+    Represents a SELECT statement.
+    """
+    defstruct [:columns, :from, :where]
+
+    @type t :: %__MODULE__{
+            columns: [Column.t()],
+            from: Table.t(),
+            where: BinaryExpression.t() | nil
+          }
   end
 
   defmodule Expression do

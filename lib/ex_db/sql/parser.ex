@@ -27,6 +27,7 @@ defmodule ExDb.SQL.Parser do
       case Tokenizer.tokenize(sql) do
         {:ok, tokens} ->
           parse_statement(tokens)
+
         {:error, reason} ->
           {:error, reason}
       end
@@ -44,7 +45,7 @@ defmodule ExDb.SQL.Parser do
     {:error, "Expected SELECT keyword"}
   end
 
-    # Parse SELECT statement
+  # Parse SELECT statement
   defp parse_select_statement([]) do
     {:error, "Expected column list"}
   end
@@ -52,7 +53,7 @@ defmodule ExDb.SQL.Parser do
   defp parse_select_statement(tokens) do
     case parse_column_list(tokens, []) do
       {:ok, columns, remaining} ->
-                case parse_from_clause(remaining) do
+        case parse_from_clause(remaining) do
           {:ok, from_table, rest} when from_table != nil ->
             statement = %SelectStatement{
               columns: columns,
@@ -61,8 +62,24 @@ defmodule ExDb.SQL.Parser do
             }
 
             case rest do
-              [] -> {:ok, statement}
-              _ -> {:error, "Unexpected tokens after table name"}
+              [] ->
+                {:ok, statement}
+
+              _ ->
+                if is_next_match?(rest, %Token{type: :keyword, value: "WHERE"}) do
+                  case parse_where_clause(rest) do
+                    {:ok, where, []} ->
+                      {:ok, %SelectStatement{columns: columns, from: from_table, where: where}}
+
+                    {:ok, _where, _rest} ->
+                      {:error, "Unexpected tokens after WHERE clause"}
+
+                    {:error, reason} ->
+                      {:error, reason}
+                  end
+                else
+                  {:error, "Unexpected tokens after table name"}
+                end
             end
 
           {:ok, nil, []} ->
@@ -72,6 +89,7 @@ defmodule ExDb.SQL.Parser do
               from: nil,
               where: nil
             }
+
             {:ok, statement}
 
           {:ok, nil, _rest} ->
@@ -119,7 +137,7 @@ defmodule ExDb.SQL.Parser do
     {:error, "Expected column, literal, or wildcard (*), got: #{inspect(List.first(tokens))}"}
   end
 
-    # Handle continuation of column list (comma or end)
+  # Handle continuation of column list (comma or end)
   defp parse_column_list_continuation([], acc) do
     {:ok, Enum.reverse(acc), []}
   end
@@ -168,5 +186,29 @@ defmodule ExDb.SQL.Parser do
 
   defp parse_table_name([token | _rest]) do
     {:error, "Expected table name, got #{token.type}"}
+  end
+
+  defp parse_where_clause([]) do
+    {:ok, nil, []}
+  end
+
+  defp parse_where_clause([%Token{type: :keyword, value: "WHERE"} | rest]) do
+    parse_binary_expression(rest)
+  end
+
+  defp parse_binary_expression([]) do
+    {:ok, nil, []}
+  end
+
+  defp parse_binary_expression([%Token{type: :operator, value: operator} | rest]) do
+    rest
+  end
+
+  defp is_next_match?([token | _rest], token) do
+    true
+  end
+
+  defp is_next_match?(_tokens, _token) do
+    false
   end
 end

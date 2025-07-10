@@ -2,7 +2,7 @@ defmodule ExDb.SQL.ParserTest do
   use ExUnit.Case, async: true
 
   alias ExDb.SQL.Parser
-  alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal}
+  alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryExpression}
 
   describe "parse/1 with literal SELECT statements" do
     test "parses SELECT with number literal" do
@@ -328,6 +328,207 @@ defmodule ExDb.SQL.ParserTest do
       }
 
       assert Parser.parse(sql) == {:ok, expected}
+    end
+  end
+
+  describe "parse/1 with basic WHERE clause" do
+    test "parses SELECT with simple equality condition" do
+      sql = "SELECT * FROM users WHERE id = 42"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "*"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %Column{name: "id"},
+          operator: "=",
+          right: %Literal{type: :number, value: 42}
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses SELECT with string comparison" do
+      sql = "SELECT name FROM users WHERE status = 'active'"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "name"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %Column{name: "status"},
+          operator: "=",
+          right: %Literal{type: :string, value: "active"}
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses SELECT with greater than condition" do
+      sql = "SELECT * FROM users WHERE age > 18"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "*"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %Column{name: "age"},
+          operator: ">",
+          right: %Literal{type: :number, value: 18}
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses SELECT with all comparison operators" do
+      operators = ["=", "!=", "<", ">", "<=", ">="]
+
+      Enum.each(operators, fn op ->
+        sql = "SELECT * FROM users WHERE age #{op} 25"
+
+        case Parser.parse(sql) do
+          {:ok, %SelectStatement{where: where_expr}} ->
+            assert where_expr.left.name == "age"
+            assert where_expr.operator == op
+            assert where_expr.right.value == 25
+
+          {:error, reason} ->
+            flunk("Expected successful parse for operator #{op}, got error: #{reason}")
+        end
+      end)
+    end
+  end
+
+  describe "parse/1 with logical operators" do
+    test "parses SELECT with AND condition" do
+      sql = "SELECT * FROM users WHERE age > 18 AND status = 'active'"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "*"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %BinaryExpression{
+            left: %Column{name: "age"},
+            operator: ">",
+            right: %Literal{type: :number, value: 18}
+          },
+          operator: "AND",
+          right: %BinaryExpression{
+            left: %Column{name: "status"},
+            operator: "=",
+            right: %Literal{type: :string, value: "active"}
+          }
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses SELECT with OR condition" do
+      sql = "SELECT * FROM users WHERE status = 'pending' OR status = 'active'"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "*"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %BinaryExpression{
+            left: %Column{name: "status"},
+            operator: "=",
+            right: %Literal{type: :string, value: "pending"}
+          },
+          operator: "OR",
+          right: %BinaryExpression{
+            left: %Column{name: "status"},
+            operator: "=",
+            right: %Literal{type: :string, value: "active"}
+          }
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses SELECT with complex logical expression" do
+      sql = "SELECT * FROM users WHERE age > 18 AND status = 'active' OR name = 'admin'"
+
+      # Should parse as: (age > 18 AND status = 'active') OR name = 'admin'
+      # Due to AND having higher precedence than OR
+
+      case Parser.parse(sql) do
+        {:ok, %SelectStatement{where: where_expr}} ->
+          assert where_expr.operator == "OR"
+          assert where_expr.left.operator == "AND"
+          assert where_expr.right.operator == "="
+          assert where_expr.right.left.name == "name"
+          assert where_expr.right.right.value == "admin"
+
+        {:error, reason} ->
+          flunk("Expected successful parse, got error: #{reason}")
+      end
+    end
+  end
+
+  describe "parse/1 WHERE clause error handling" do
+    test "returns error for incomplete WHERE clause" do
+      sql = "SELECT * FROM users WHERE"
+
+      assert Parser.parse(sql) == {:error, "Expected expression after WHERE"}
+    end
+
+    test "returns error for invalid WHERE expression" do
+      sql = "SELECT * FROM users WHERE ="
+
+      assert Parser.parse(sql) == {:error, "Expected column or literal in expression"}
+    end
+
+    test "returns error for missing operator in WHERE" do
+      sql = "SELECT * FROM users WHERE id 42"
+
+      assert Parser.parse(sql) == {:error, "Expected operator in expression"}
+    end
+
+    test "returns error for incomplete comparison" do
+      sql = "SELECT * FROM users WHERE id ="
+
+      assert Parser.parse(sql) == {:error, "Expected value after operator"}
+    end
+
+    test "returns error for invalid logical operator" do
+      sql = "SELECT * FROM users WHERE id = 1 INVALID name = 'test'"
+
+      assert Parser.parse(sql) == {:error, "Expected AND or OR, got identifier"}
+    end
+  end
+
+  describe "parse/1 WHERE clause with whitespace" do
+    test "handles extra whitespace in WHERE clause" do
+      sql = "SELECT   *   FROM   users   WHERE   id   =   42"
+
+      expected = %SelectStatement{
+        columns: [%Column{name: "*"}],
+        from: %Table{name: "users"},
+        where: %BinaryExpression{
+          left: %Column{name: "id"},
+          operator: "=",
+          right: %Literal{type: :number, value: 42}
+        }
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "handles case-insensitive WHERE, AND, OR keywords" do
+      sql = "select * from users where age > 18 and status = 'active'"
+
+      case Parser.parse(sql) do
+        {:ok, %SelectStatement{where: where_expr}} ->
+          assert where_expr.operator == "AND"
+          assert where_expr.left.operator == ">"
+          assert where_expr.right.operator == "="
+
+        {:error, reason} ->
+          flunk("Expected successful parse, got error: #{reason}")
+      end
     end
   end
 end
