@@ -43,4 +43,17 @@ defmodule ExDb.SQL.Token do
   def string(value) do
     %__MODULE__{type: :string, value: value}
   end
+
+  def comma() do
+    %__MODULE__{type: :punctuation, value: ","}
+  end
+
+  @doc """
+  Represents the end of the token stream.
+  Not a real token.
+  """
+  def eof() do
+    %__MODULE__{type: :eof, value: nil}
+  end
+
 end

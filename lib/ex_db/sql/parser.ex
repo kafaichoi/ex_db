@@ -3,6 +3,8 @@ defmodule ExDb.SQL.Parser do
   Recursive descent parser for SQL statements.
   """
 
+  defstruct [:tokens, :current]
+
   alias ExDb.SQL.{Tokenizer, Token}
   alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal}
 
@@ -25,8 +27,12 @@ defmodule ExDb.SQL.Parser do
       {:error, "Empty query"}
     else
       case Tokenizer.tokenize(sql) do
+        {:ok, []} ->
+          {:error, "Empty token list"}
+
         {:ok, tokens} ->
-          parse_statement(tokens)
+          parser = %__MODULE__{tokens: tokens, current: 0}
+          parse_statement(parser)
 
         {:error, reason} ->
           {:error, reason}
@@ -35,180 +41,109 @@ defmodule ExDb.SQL.Parser do
   end
 
   # Main statement parsing entry point
-  defp parse_statement([]), do: {:error, "Empty token list"}
+  defp parse_statement(parser) do
+    case peek(parser) do
+      %Token{type: :eof} ->
+        {:error, "Unexpected EOF"}
 
-  defp parse_statement([%Token{type: :keyword, value: "SELECT"} | rest]) do
-    parse_select_statement(rest)
+      %Token{type: :keyword, value: "SELECT"} ->
+        parse_select_statement(parser)
+    end
   end
 
-  defp parse_statement(_tokens) do
-    {:error, "Expected SELECT keyword"}
+  defp peek(%__MODULE__{tokens: tokens, current: current}) do
+    if current < length(tokens) do
+      Enum.at(tokens, current)
+    else
+      %Token{type: :eof, value: nil}
+    end
   end
 
-  # Parse SELECT statement
-  defp parse_select_statement([]) do
-    {:error, "Expected column list"}
-  end
-
-  defp parse_select_statement(tokens) do
-    case parse_column_list(tokens, []) do
-      {:ok, columns, remaining} ->
-        case parse_from_clause(remaining) do
-          {:ok, from_table, rest} when from_table != nil ->
-            statement = %SelectStatement{
-              columns: columns,
-              from: from_table,
-              where: nil
-            }
-
-            case rest do
-              [] ->
-                {:ok, statement}
-
-              _ ->
-                if is_next_match?(rest, %Token{type: :keyword, value: "WHERE"}) do
-                  case parse_where_clause(rest) do
-                    {:ok, where, []} ->
-                      {:ok, %SelectStatement{columns: columns, from: from_table, where: where}}
-
-                    {:ok, _where, _rest} ->
-                      {:error, "Unexpected tokens after WHERE clause"}
-
-                    {:error, reason} ->
-                      {:error, reason}
-                  end
-                else
-                  {:error, "Unexpected tokens after table name"}
-                end
-            end
-
-          {:ok, nil, []} ->
-            # No FROM clause, just literals
-            statement = %SelectStatement{
-              columns: columns,
-              from: nil,
-              where: nil
-            }
-
-            {:ok, statement}
-
-          {:ok, nil, _rest} ->
-            {:error, "Unexpected tokens after SELECT list"}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
+  defp parse_select_statement(parser) do
+    with {:ok, parser} <- consume(parser, Token.select()),
+         {:ok, {columns, parser}} <- parse_select_exprs(parser),
+         {:ok, {from_table, parser}} <- parse_from_table(parser),
+         {:ok, {where, parser}} <- parse_optional_where(parser) do
+      {:ok, %SelectStatement{columns: columns, from: from_table, where: where}}
+    else
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  # Parse column list (comma-separated)
-  defp parse_column_list([], acc) when acc != [] do
-    {:ok, Enum.reverse(acc), []}
+  defp advance(%__MODULE__{tokens: tokens, current: current} = parser) do
+    if current < length(tokens) do
+      {Enum.at(tokens, current), %{parser | current: current + 1}}
+    else
+      {nil, parser}
+    end
   end
 
-  defp parse_column_list([], []) do
-    {:error, "Expected column list"}
+  defp consume(parser, token) do
+    case peek(parser) do
+      ^token ->
+        {:ok, elem(advance(parser), 1)}
+
+      token2 ->
+        {:error, "Expected #{inspect(token)} but got #{inspect(token2)}"}
+    end
   end
 
-  defp parse_column_list([%Token{type: :number, value: value} | rest], acc) do
-    literal = %Literal{type: :number, value: value}
-    parse_column_list_continuation(rest, [literal | acc])
+  defp parse_select_exprs(parser) do
+    do_parse_select_exprs(parser, [])
   end
 
-  defp parse_column_list([%Token{type: :string, value: value} | rest], acc) do
-    literal = %Literal{type: :string, value: value}
-    parse_column_list_continuation(rest, [literal | acc])
+  defp do_parse_select_exprs(parser, exprs) do
+    with {:ok, {expr, parser}} <- parse_select_expr(parser) do
+      case consume(parser, Token.comma()) do
+        {:ok, {_, parser}} ->
+          do_parse_select_exprs(parser, [expr | exprs])
+
+        {:error, _} ->
+          {:ok, {Enum.reverse(exprs), parser}}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  defp parse_column_list([%Token{type: :identifier, value: name} | rest], acc) do
-    column = %Column{name: name}
-    parse_column_list_continuation(rest, [column | acc])
+  defp parse_select_expr(parser) do
+    with {%Token{type: type} = expr, parser} when type in [:identifier, :literal] <- advance(parser) do
+      {:ok, {expr, parser}}
+    else
+      _ ->
+        {:error, "Expected identifier or literal"}
+    end
   end
 
-  defp parse_column_list([%Token{type: :operator, value: "*"} | rest], acc) do
-    column = %Column{name: "*"}
-    parse_column_list_continuation(rest, [column | acc])
+  defp parse_from_table(parser) do
+    with {%Token{type: :keyword, value: "FROM"} = from_token, parser} <- advance(parser),
+         {%Token{type: :identifier} = table_token, parser} <- advance(parser) do
+      {:ok, {table_token, parser}}
+    else
+      _ ->
+        {:error, "Expected FROM keyword and table name"}
+    end
   end
 
-  defp parse_column_list(tokens, _acc) do
-    {:error, "Expected column, literal, or wildcard (*), got: #{inspect(List.first(tokens))}"}
+  defp parse_optional_where(parser) do
+    case peek(parser) do
+      %Token{type: :keyword, value: "WHERE"} ->
+        parse_where_clause(parser)
+
+      _ ->
+        {:ok, nil, parser}
+    end
   end
 
-  # Handle continuation of column list (comma or end)
-  defp parse_column_list_continuation([], acc) do
-    {:ok, Enum.reverse(acc), []}
+  defp parse_where_clause(parser) do
+    with {:ok, {expr, parser}} <- parse_expr(parser) do
+      {:ok, {expr, parser}}
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  defp parse_column_list_continuation([%Token{type: :punctuation, value: ","} | rest], acc) do
-    # After comma, expect another column
-    parse_column_list(rest, acc)
-  end
-
-  defp parse_column_list_continuation(remaining, acc) do
-    # No comma, so we're done with the column list
-    {:ok, Enum.reverse(acc), remaining}
-  end
-
-  # Parse FROM clause (optional)
-  defp parse_from_clause([]) do
-    {:ok, nil, []}
-  end
-
-  defp parse_from_clause([%Token{type: :keyword, value: "FROM"} | rest]) do
-    parse_table_name(rest)
-  end
-
-  defp parse_from_clause(tokens) do
-    # No FROM keyword found, return no table and remaining tokens
-    {:ok, nil, tokens}
-  end
-
-  # Parse table name after FROM
-  defp parse_table_name([]) do
-    {:error, "Expected table name after FROM"}
-  end
-
-  defp parse_table_name([%Token{type: :identifier, value: table_name} | rest]) do
-    table = %Table{name: table_name}
-    {:ok, table, rest}
-  end
-
-  defp parse_table_name([%Token{type: :number, value: _} | _rest]) do
-    {:error, "Expected table name, got number"}
-  end
-
-  defp parse_table_name([%Token{type: :string, value: _} | _rest]) do
-    {:error, "Expected table name, got string"}
-  end
-
-  defp parse_table_name([token | _rest]) do
-    {:error, "Expected table name, got #{token.type}"}
-  end
-
-  defp parse_where_clause([]) do
-    {:ok, nil, []}
-  end
-
-  defp parse_where_clause([%Token{type: :keyword, value: "WHERE"} | rest]) do
-    parse_binary_expression(rest)
-  end
-
-  defp parse_binary_expression([]) do
-    {:ok, nil, []}
-  end
-
-  defp parse_binary_expression([%Token{type: :operator, value: operator} | rest]) do
-    rest
-  end
-
-  defp is_next_match?([token | _rest], token) do
-    true
-  end
-
-  defp is_next_match?(_tokens, _token) do
-    false
-  end
 end

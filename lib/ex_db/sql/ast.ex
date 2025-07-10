@@ -14,6 +14,7 @@ defmodule ExDb.SQL.AST do
           }
   end
 
+
   defmodule Table do
     @moduledoc """
     Represents a table reference.
@@ -76,4 +77,16 @@ defmodule ExDb.SQL.AST do
 
     @type t :: BinaryExpression.t()
   end
+
+  defmodule SelectExpr do
+    @moduledoc """
+    Represents a SELECT expression.
+    """
+    defstruct [:expr]
+
+    @type t :: %__MODULE__{
+            expr: Column.t() | Literal.t()
+          }
+  end
+
 end
