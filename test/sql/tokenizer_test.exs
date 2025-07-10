@@ -23,7 +23,7 @@ defmodule ExDb.SQL.TokenizerTest do
 
       expected = [
         %Token{type: :keyword, value: "SELECT"},
-        %Token{type: :string, value: "hello"}
+        %Token{type: :literal, value: %Token.Literal{type: :string, value: "hello"}}
       ]
 
       assert Tokenizer.tokenize(sql) == {:ok, expected}
@@ -34,7 +34,7 @@ defmodule ExDb.SQL.TokenizerTest do
 
       expected = [
         %Token{type: :keyword, value: "SELECT"},
-        %Token{type: :number, value: 42}
+        %Token{type: :literal, value: %Token.Literal{type: :number, value: 42}}
       ]
 
       assert Tokenizer.tokenize(sql) == {:ok, expected}
@@ -59,7 +59,7 @@ defmodule ExDb.SQL.TokenizerTest do
       expected = [
         %Token{type: :identifier, value: "id"},
         %Token{type: :operator, value: "="},
-        %Token{type: :number, value: 42}
+        %Token{type: :literal, value: %Token.Literal{type: :number, value: 42}}
       ]
 
       assert Tokenizer.tokenize(sql) == {:ok, expected}

@@ -2,7 +2,7 @@ defmodule ExDb.SQL.ParserTest do
   use ExUnit.Case, async: true
 
   alias ExDb.SQL.Parser
-  alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryExpression}
+  alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryOp}
 
   describe "parse/1 with literal SELECT statements" do
     test "parses SELECT with number literal" do
@@ -71,7 +71,8 @@ defmodule ExDb.SQL.ParserTest do
     end
 
     test "returns error for invalid SQL" do
-      assert Parser.parse("INVALID QUERY") == {:error, "Expected SELECT keyword"}
+      assert {:error, error} = Parser.parse("INVALID QUERY")
+      assert error =~ "Unexpected token: "
     end
 
     test "returns error for incomplete SELECT" do
@@ -244,7 +245,7 @@ defmodule ExDb.SQL.ParserTest do
     test "returns error for invalid token after FROM" do
       sql = "SELECT id FROM 123"
 
-      assert Parser.parse(sql) == {:error, "Expected table name, got number"}
+      assert Parser.parse(sql) == {:error, "Expected table name, got literal"}
     end
 
     test "returns error for extra tokens after table name" do
@@ -338,7 +339,7 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "*"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
+        where: %BinaryOp{
           left: %Column{name: "id"},
           operator: "=",
           right: %Literal{type: :number, value: 42}
@@ -354,7 +355,7 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "name"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
+        where: %BinaryOp{
           left: %Column{name: "status"},
           operator: "=",
           right: %Literal{type: :string, value: "active"}
@@ -370,7 +371,7 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "*"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
+        where: %BinaryOp{
           left: %Column{name: "age"},
           operator: ">",
           right: %Literal{type: :number, value: 18}
@@ -406,14 +407,14 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "*"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
-          left: %BinaryExpression{
+        where: %BinaryOp{
+          left: %BinaryOp{
             left: %Column{name: "age"},
             operator: ">",
             right: %Literal{type: :number, value: 18}
           },
           operator: "AND",
-          right: %BinaryExpression{
+          right: %BinaryOp{
             left: %Column{name: "status"},
             operator: "=",
             right: %Literal{type: :string, value: "active"}
@@ -430,14 +431,14 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "*"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
-          left: %BinaryExpression{
+        where: %BinaryOp{
+          left: %BinaryOp{
             left: %Column{name: "status"},
             operator: "=",
             right: %Literal{type: :string, value: "pending"}
           },
           operator: "OR",
-          right: %BinaryExpression{
+          right: %BinaryOp{
             left: %Column{name: "status"},
             operator: "=",
             right: %Literal{type: :string, value: "active"}
@@ -472,13 +473,14 @@ defmodule ExDb.SQL.ParserTest do
     test "returns error for incomplete WHERE clause" do
       sql = "SELECT * FROM users WHERE"
 
-      assert Parser.parse(sql) == {:error, "Expected expression after WHERE"}
+      assert Parser.parse(sql) == {:error, "Expected expression"}
     end
 
     test "returns error for invalid WHERE expression" do
       sql = "SELECT * FROM users WHERE ="
 
-      assert Parser.parse(sql) == {:error, "Expected column or literal in expression"}
+      assert {:error, error} = Parser.parse(sql)
+      assert error =~ "Expected identifier, literal, "
     end
 
     test "returns error for missing operator in WHERE" do
@@ -490,7 +492,8 @@ defmodule ExDb.SQL.ParserTest do
     test "returns error for incomplete comparison" do
       sql = "SELECT * FROM users WHERE id ="
 
-      assert Parser.parse(sql) == {:error, "Expected value after operator"}
+      assert {:error, error} = Parser.parse(sql)
+      assert error =~ "Expected expression"
     end
 
     test "returns error for invalid logical operator" do
@@ -507,7 +510,7 @@ defmodule ExDb.SQL.ParserTest do
       expected = %SelectStatement{
         columns: [%Column{name: "*"}],
         from: %Table{name: "users"},
-        where: %BinaryExpression{
+        where: %BinaryOp{
           left: %Column{name: "id"},
           operator: "=",
           right: %Literal{type: :number, value: 42}

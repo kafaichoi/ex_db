@@ -6,7 +6,7 @@ defmodule ExDb.SQL.Parser do
   defstruct [:tokens, :current]
 
   alias ExDb.SQL.{Tokenizer, Token}
-  alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal}
+  alias ExDb.SQL.AST.{SelectStatement, Table, Literal, Column, BinaryOp}
 
   @doc """
   Parses a SQL string into an AST.
@@ -43,11 +43,11 @@ defmodule ExDb.SQL.Parser do
   # Main statement parsing entry point
   defp parse_statement(parser) do
     case peek(parser) do
-      %Token{type: :eof} ->
-        {:error, "Unexpected EOF"}
-
       %Token{type: :keyword, value: "SELECT"} ->
         parse_select_statement(parser)
+
+      token ->
+        {:error, "Unexpected token: #{inspect(token)}"}
     end
   end
 
@@ -62,9 +62,28 @@ defmodule ExDb.SQL.Parser do
   defp parse_select_statement(parser) do
     with {:ok, parser} <- consume(parser, Token.select()),
          {:ok, {columns, parser}} <- parse_select_exprs(parser),
-         {:ok, {from_table, parser}} <- parse_from_table(parser),
+         {:ok, {from_table, parser}} <- parse_optional_from_table(parser),
          {:ok, {where, parser}} <- parse_optional_where(parser) do
-      {:ok, %SelectStatement{columns: columns, from: from_table, where: where}}
+      # Validate that all tokens are consumed
+      case peek(parser) do
+        %Token{type: :eof} ->
+          {:ok, %SelectStatement{columns: columns, from: from_table, where: where}}
+
+        _token ->
+          cond do
+            from_table != nil and where != nil ->
+              {:error, "Unexpected tokens after WHERE clause"}
+
+            from_table != nil and where == nil ->
+              {:error, "Unexpected tokens after table name"}
+
+            from_table == nil and where == nil ->
+              {:error, "Unexpected tokens after SELECT list"}
+
+            true ->
+              {:error, "Unexpected tokens after statement"}
+          end
+      end
     else
       {:error, reason} ->
         {:error, reason}
@@ -90,17 +109,21 @@ defmodule ExDb.SQL.Parser do
   end
 
   defp parse_select_exprs(parser) do
-    do_parse_select_exprs(parser, [])
+    if peek(parser).type == :eof do
+      {:error, "Expected column list"}
+    else
+      do_parse_select_exprs(parser, [])
+    end
   end
 
   defp do_parse_select_exprs(parser, exprs) do
-    with {:ok, {expr, parser}} <- parse_select_expr(parser) do
+    with {:ok, {expr, parser}} <- parse_expr(parser) do
       case consume(parser, Token.comma()) do
-        {:ok, {_, parser}} ->
+        {:ok, parser} ->
           do_parse_select_exprs(parser, [expr | exprs])
 
         {:error, _} ->
-          {:ok, {Enum.reverse(exprs), parser}}
+          {:ok, {Enum.reverse([expr | exprs]), parser}}
       end
     else
       {:error, reason} ->
@@ -108,42 +131,183 @@ defmodule ExDb.SQL.Parser do
     end
   end
 
-  defp parse_select_expr(parser) do
-    with {%Token{type: type} = expr, parser} when type in [:identifier, :literal] <- advance(parser) do
-      {:ok, {expr, parser}}
-    else
+  defp parse_expr(parser) do
+    case advance(parser) do
+      {%Token{type: :literal, value: %Token.Literal{type: type, value: value}}, parser} ->
+        literal = %Literal{type: type, value: value}
+        {:ok, {literal, parser}}
+
+      {%Token{type: :identifier, value: name}, parser} ->
+        column = %Column{name: name}
+        {:ok, {column, parser}}
+
+      {%Token{type: :operator, value: "*"}, parser} ->
+        column = %Column{name: "*"}
+        {:ok, {column, parser}}
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected identifier, literal, or *, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected expression"}
+    end
+  end
+
+  defp parse_optional_from_table(parser) do
+    case peek(parser) do
+      %Token{type: :keyword, value: "FROM"} ->
+        parse_from_table(parser)
+
       _ ->
-        {:error, "Expected identifier or literal"}
+        {:ok, {nil, parser}}
     end
   end
 
   defp parse_from_table(parser) do
-    with {%Token{type: :keyword, value: "FROM"} = from_token, parser} <- advance(parser),
-         {%Token{type: :identifier} = table_token, parser} <- advance(parser) do
-      {:ok, {table_token, parser}}
-    else
-      _ ->
-        {:error, "Expected FROM keyword and table name"}
+    with {:ok, parser} <- consume(parser, Token.from()),
+         {:ok, {table, parser}} <- parse_table_name(parser) do
+      {:ok, {table, parser}}
+    end
+  end
+
+  defp parse_table_name(parser) do
+    case advance(parser) do
+      {%Token{type: :identifier, value: table_name}, parser} ->
+        table = %Table{name: table_name}
+        {:ok, {table, parser}}
+
+      {%Token{type: :number}, _parser} ->
+        {:error, "Expected table name, got number"}
+
+      {%Token{type: :string}, _parser} ->
+        {:error, "Expected table name, got string"}
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected table name, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected table name after FROM"}
     end
   end
 
   defp parse_optional_where(parser) do
     case peek(parser) do
       %Token{type: :keyword, value: "WHERE"} ->
-        parse_where_clause(parser)
+        case parse_where_clause(parser) do
+          {:ok, {where, parser}} ->
+            # Check for invalid logical operators after WHERE expression
+            case peek(parser) do
+              %Token{type: :identifier, value: _} ->
+                {:error, "Expected AND or OR, got identifier"}
+
+              %Token{type: :keyword, value: keyword} when keyword not in ["AND", "OR"] ->
+                {:error, "Expected AND or OR, got keyword"}
+
+              _ ->
+                {:ok, {where, parser}}
+            end
+
+          error ->
+            error
+        end
 
       _ ->
-        {:ok, nil, parser}
+        {:ok, {nil, parser}}
     end
   end
 
   defp parse_where_clause(parser) do
-    with {:ok, {expr, parser}} <- parse_expr(parser) do
+    with {:ok, parser} <- consume(parser, Token.where()),
+         {:ok, {expr, parser}} <- parse_where_expression(parser) do
       {:ok, {expr, parser}}
-    else
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
+  defp parse_where_expression(parser) do
+    with {:ok, {left, parser}} <- parse_primary_expression(parser) do
+      case peek(parser) do
+        %Token{type: :operator, value: op} when op in ["=", "!=", "<", ">", "<=", ">="] ->
+          parse_binary_expression_rest(parser, left, 0)
+
+        %Token{type: :keyword, value: op} when op in ["AND", "OR"] ->
+          parse_binary_expression_rest(parser, left, 0)
+
+        %Token{type: :identifier, value: _} ->
+          {:error, "Expected operator in expression"}
+
+        %Token{type: :literal, value: _} ->
+          {:error, "Expected operator in expression"}
+
+        _ ->
+          {:ok, {left, parser}}
+      end
+    end
+  end
+
+  # Binary expression parsing with precedence climbing
+  defp parse_binary_expression(parser, min_precedence) do
+    with {:ok, {left, parser}} <- parse_primary_expression(parser) do
+      parse_binary_expression_rest(parser, left, min_precedence)
+    end
+  end
+
+  defp parse_binary_expression_rest(parser, left, min_precedence) do
+    case peek(parser) do
+      %Token{type: :operator, value: op} when op in ["=", "!=", "<", ">", "<=", ">="] ->
+        prec = operator_precedence(op)
+
+        if prec >= min_precedence do
+          case consume(parser, %Token{type: :operator, value: op}) do
+            {:ok, parser} ->
+              case parse_binary_expression(parser, prec + 1) do
+                {:ok, {right, parser}} ->
+                  binary_op = %BinaryOp{left: left, operator: op, right: right}
+                  parse_binary_expression_rest(parser, binary_op, min_precedence)
+
+                {:error, _reason} ->
+                  {:error, "Expected expression"}
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        else
+          {:ok, {left, parser}}
+        end
+
+      %Token{type: :keyword, value: op} when op in ["AND", "OR"] ->
+        prec = operator_precedence(op)
+
+        if prec >= min_precedence do
+          case consume(parser, %Token{type: :keyword, value: op}) do
+            {:ok, parser} ->
+              case parse_binary_expression(parser, prec + 1) do
+                {:ok, {right, parser}} ->
+                  binary_op = %BinaryOp{left: left, operator: op, right: right}
+                  parse_binary_expression_rest(parser, binary_op, min_precedence)
+
+                {:error, _reason} ->
+                  {:error, "Expected expression"}
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        else
+          {:ok, {left, parser}}
+        end
+
+      _ ->
+        {:ok, {left, parser}}
+    end
+  end
+
+  defp parse_primary_expression(parser) do
+    parse_expr(parser)
+  end
+
+  # Operator precedence (higher number = higher precedence)
+  defp operator_precedence("OR"), do: 1
+  defp operator_precedence("AND"), do: 2
+  defp operator_precedence(op) when op in ["=", "!=", "<", ">", "<=", ">="], do: 3
 end

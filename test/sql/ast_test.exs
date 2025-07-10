@@ -6,7 +6,7 @@ defmodule ExDb.SQL.ASTTest do
     Column,
     Table,
     Literal,
-    BinaryExpression
+    BinaryOp
   }
 
   describe "SelectStatement" do
@@ -33,7 +33,7 @@ defmodule ExDb.SQL.ASTTest do
       columns = [%Column{name: "*"}]
       table = %Table{name: "users"}
 
-      where_expr = %BinaryExpression{
+      where_expr = %BinaryOp{
         left: %Column{name: "id"},
         operator: "=",
         right: %Literal{type: :number, value: 42}
@@ -108,7 +108,7 @@ defmodule ExDb.SQL.ASTTest do
 
   describe "BinaryExpression" do
     test "creates comparison expression" do
-      expr = %BinaryExpression{
+      expr = %BinaryOp{
         left: %Column{name: "age"},
         operator: ">",
         right: %Literal{type: :number, value: 18}
@@ -120,7 +120,7 @@ defmodule ExDb.SQL.ASTTest do
     end
 
     test "creates equality expression" do
-      expr = %BinaryExpression{
+      expr = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "active"}
@@ -132,19 +132,19 @@ defmodule ExDb.SQL.ASTTest do
     end
 
     test "creates logical AND expression" do
-      left_expr = %BinaryExpression{
+      left_expr = %BinaryOp{
         left: %Column{name: "age"},
         operator: ">",
         right: %Literal{type: :number, value: 18}
       }
 
-      right_expr = %BinaryExpression{
+      right_expr = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "active"}
       }
 
-      and_expr = %BinaryExpression{
+      and_expr = %BinaryOp{
         left: left_expr,
         operator: "AND",
         right: right_expr
@@ -156,19 +156,19 @@ defmodule ExDb.SQL.ASTTest do
     end
 
     test "creates logical OR expression" do
-      left_expr = %BinaryExpression{
+      left_expr = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "pending"}
       }
 
-      right_expr = %BinaryExpression{
+      right_expr = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "active"}
       }
 
-      or_expr = %BinaryExpression{
+      or_expr = %BinaryOp{
         left: left_expr,
         operator: "OR",
         right: right_expr
@@ -185,7 +185,7 @@ defmodule ExDb.SQL.ASTTest do
       supported_operators = ["=", "!=", "<", ">", "<=", ">=", "AND", "OR"]
 
       Enum.each(supported_operators, fn op ->
-        expr = %BinaryExpression{
+        expr = %BinaryOp{
           left: %Column{name: "test"},
           operator: op,
           right: %Literal{type: :string, value: "value"}
@@ -199,31 +199,31 @@ defmodule ExDb.SQL.ASTTest do
   describe "complex expressions" do
     test "creates nested expression tree" do
       # WHERE age > 18 AND (status = 'active' OR status = 'pending')
-      age_expr = %BinaryExpression{
+      age_expr = %BinaryOp{
         left: %Column{name: "age"},
         operator: ">",
         right: %Literal{type: :number, value: 18}
       }
 
-      status_active = %BinaryExpression{
+      status_active = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "active"}
       }
 
-      status_pending = %BinaryExpression{
+      status_pending = %BinaryOp{
         left: %Column{name: "status"},
         operator: "=",
         right: %Literal{type: :string, value: "pending"}
       }
 
-      status_or = %BinaryExpression{
+      status_or = %BinaryOp{
         left: status_active,
         operator: "OR",
         right: status_pending
       }
 
-      final_expr = %BinaryExpression{
+      final_expr = %BinaryOp{
         left: age_expr,
         operator: "AND",
         right: status_or

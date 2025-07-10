@@ -14,7 +14,6 @@ defmodule ExDb.SQL.AST do
           }
   end
 
-
   defmodule Table do
     @moduledoc """
     Represents a table reference.
@@ -40,21 +39,22 @@ defmodule ExDb.SQL.AST do
           }
   end
 
-  defmodule BinaryExpression do
+  defmodule BinaryOp do
     @moduledoc """
     Represents a binary expression with left operand, operator, and right operand.
     Used for comparisons (=, <, >, etc.) and logical operations (AND, OR).
     """
     defstruct [:left, :operator, :right]
 
-    @type operand :: Column.t() | Literal.t() | BinaryExpression.t()
-
     @type t :: %__MODULE__{
-            left: operand(),
-            operator: String.t(),
-            right: operand()
+            left: Expression.t(),
+            operator: AST.binary_operator(),
+            right: Expression.t()
           }
   end
+
+  @type binary_operator :: :eq | :ne | :lt | :le | :gt | :ge | :and | :or
+  @type expression :: Column.t() | Literal.t() | BinaryOp.t()
 
   defmodule SelectStatement do
     @moduledoc """
@@ -65,28 +65,7 @@ defmodule ExDb.SQL.AST do
     @type t :: %__MODULE__{
             columns: [Column.t()],
             from: Table.t(),
-            where: BinaryExpression.t() | nil
+            where: BinaryOp.t() | nil
           }
   end
-
-  defmodule Expression do
-    @moduledoc """
-    Base module for expressions. Currently just an alias for BinaryExpression,
-    but can be extended for other expression types in the future.
-    """
-
-    @type t :: BinaryExpression.t()
-  end
-
-  defmodule SelectExpr do
-    @moduledoc """
-    Represents a SELECT expression.
-    """
-    defstruct [:expr]
-
-    @type t :: %__MODULE__{
-            expr: Column.t() | Literal.t()
-          }
-  end
-
 end

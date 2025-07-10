@@ -5,12 +5,25 @@ defmodule ExDb.SQL.Token do
 
   defstruct [:type, :value]
 
-  @type token_type :: :keyword | :identifier | :operator | :string | :number | :punctuation
+  @type token_type :: :keyword | :identifier | :operator | :literal | :punctuation
+
+  defmodule Literal do
+    defstruct [:type, :value]
+
+    @type t :: %__MODULE__{
+            type: :number | :string,
+            value: number() | String.t()
+          }
+  end
 
   @type t :: %__MODULE__{
           type: token_type(),
-          value: any()
+          value: Literal.t() | String.t()
         }
+
+  def literal(type, value) do
+    %__MODULE__{type: :literal, value: %Literal{type: type, value: value}}
+  end
 
   def greater() do
     %__MODULE__{type: :operator, value: ">"}
@@ -55,5 +68,4 @@ defmodule ExDb.SQL.Token do
   def eof() do
     %__MODULE__{type: :eof, value: nil}
   end
-
 end

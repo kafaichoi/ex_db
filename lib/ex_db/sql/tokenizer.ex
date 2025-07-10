@@ -39,7 +39,7 @@ defmodule ExDb.SQL.Tokenizer do
   defp do_tokenize(<<"'", rest::binary>>, acc) do
     case extract_string(rest, "") do
       {:ok, value, remaining} ->
-        token = %Token{type: :string, value: value}
+        token = Token.literal(:string, value)
         do_tokenize(remaining, [token | acc])
 
       {:error, reason} ->
@@ -73,7 +73,7 @@ defmodule ExDb.SQL.Tokenizer do
   defp do_tokenize(<<char, _::binary>> = input, acc) when char in ?0..?9 do
     case extract_number(input, "") do
       {:ok, value, remaining} ->
-        token = %Token{type: :number, value: value}
+        token = Token.literal(:number, value)
         do_tokenize(remaining, [token | acc])
 
       {:error, reason} ->
