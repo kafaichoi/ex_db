@@ -5,6 +5,7 @@ defmodule ExDb.Wire.Protocol do
 
   alias ExDb.Wire.Messages
   alias ExDb.Wire.Parser
+  require Logger
 
   @doc """
   Handle the complete startup handshake with a client.
@@ -39,8 +40,6 @@ defmodule ExDb.Wire.Protocol do
   Returns {:ok, query} on success, {:error, reason} on failure.
   """
   def handle_query(socket) do
-    require Logger
-
     case read_normal_message(socket) do
       {:ok, %{type: ?Q, data: data}} ->
         Logger.info("Received query message (Q), processing...")
@@ -65,12 +64,17 @@ defmodule ExDb.Wire.Protocol do
   defp read_normal_message(socket) do
     case :gen_tcp.recv(socket, 5, 5000) do
       {:ok, <<type, length::32>>} ->
-        case :gen_tcp.recv(socket, length - 5, 5000) do
-          {:ok, data} ->
-            {:ok, %{type: type, data: data}}
+        if length < 5 do
+          {:ok, %{type: type, data: <<>>}}
+        else
+          case :gen_tcp.recv(socket, length - 4, 5000) do
+            {:ok, data} ->
+              {:ok, %{type: type, data: String.trim_trailing(data, <<0>>)}}
 
-          {:error, _reason} ->
-            {:error, :malformed}
+            {:error, reason} ->
+              Logger.warning("Failed to read query message: #{inspect(reason)}")
+              {:error, :malformed}
+          end
         end
 
       {:error, :closed} = err ->
