@@ -6,8 +6,6 @@ defmodule ExDb.SQL.Tokenizer do
   alias ExDb.SQL.Token
 
   @keywords ~w(SELECT FROM WHERE AND OR)
-  @operators ~w(= != < > <= >= *)
-  @punctuation ~w(,)
 
   @doc """
   Tokenizes a SQL string into a list of tokens.

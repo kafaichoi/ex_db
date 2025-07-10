@@ -5,7 +5,6 @@ defmodule ExDb.SQL.ASTTest do
     SelectStatement,
     Column,
     Table,
-    Expression,
     Literal,
     BinaryExpression
   }
