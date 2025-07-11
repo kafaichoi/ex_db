@@ -49,6 +49,26 @@ defmodule ExDb.SQL.Token do
     %__MODULE__{type: :keyword, value: "FROM"}
   end
 
+  def insert() do
+    %__MODULE__{type: :keyword, value: "INSERT"}
+  end
+
+  def into() do
+    %__MODULE__{type: :keyword, value: "INTO"}
+  end
+
+  def values() do
+    %__MODULE__{type: :keyword, value: "VALUES"}
+  end
+
+  def left_paren() do
+    %__MODULE__{type: :punctuation, value: "("}
+  end
+
+  def right_paren() do
+    %__MODULE__{type: :punctuation, value: ")"}
+  end
+
   def identifier(value) do
     %__MODULE__{type: :identifier, value: value}
   end

@@ -68,4 +68,16 @@ defmodule ExDb.SQL.AST do
             where: BinaryOp.t() | nil
           }
   end
+
+  defmodule InsertStatement do
+    @moduledoc """
+    Represents an INSERT statement.
+    """
+    defstruct [:table, :values]
+
+    @type t :: %__MODULE__{
+            table: Table.t(),
+            values: [Literal.t()]
+          }
+  end
 end

@@ -3,6 +3,7 @@ defmodule ExDb.SQL.ParserTest do
 
   alias ExDb.SQL.Parser
   alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryOp}
+  alias ExDb.SQL.AST.InsertStatement
 
   describe "parse/1 with literal SELECT statements" do
     test "parses SELECT with number literal" do
@@ -532,6 +533,95 @@ defmodule ExDb.SQL.ParserTest do
         {:error, reason} ->
           flunk("Expected successful parse, got error: #{reason}")
       end
+    end
+  end
+
+  describe "parse/1 INSERT statements" do
+    test "parses simple INSERT with single value" do
+      sql = "INSERT INTO users VALUES (1)"
+
+      expected = %InsertStatement{
+        table: %Table{name: "users"},
+        values: [%Literal{type: :number, value: 1}]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses INSERT with multiple values" do
+      sql = "INSERT INTO users VALUES (1, 'John', 'john@example.com')"
+
+      expected = %InsertStatement{
+        table: %Table{name: "users"},
+        values: [
+          %Literal{type: :number, value: 1},
+          %Literal{type: :string, value: "John"},
+          %Literal{type: :string, value: "john@example.com"}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses INSERT with mixed literal types" do
+      sql = "INSERT INTO products VALUES (42, 'Widget')"
+
+      expected = %InsertStatement{
+        table: %Table{name: "products"},
+        values: [
+          %Literal{type: :number, value: 42},
+          %Literal{type: :string, value: "Widget"}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "handles case-insensitive INSERT keywords" do
+      sql = "insert into users values (1)"
+
+      expected = %InsertStatement{
+        table: %Table{name: "users"},
+        values: [%Literal{type: :number, value: 1}]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "returns error for missing INTO keyword" do
+      sql = "INSERT users VALUES (1)"
+
+      assert Parser.parse(sql) ==
+               {:error,
+                "Expected %ExDb.SQL.Token{type: :keyword, value: \"INTO\"} but got %ExDb.SQL.Token{type: :identifier, value: \"users\"}"}
+    end
+
+    test "returns error for missing VALUES keyword" do
+      sql = "INSERT INTO users (1)"
+
+      assert Parser.parse(sql) ==
+               {:error,
+                "Expected %ExDb.SQL.Token{type: :keyword, value: \"VALUES\"} but got %ExDb.SQL.Token{type: :punctuation, value: \"(\"}"}
+    end
+
+    test "returns error for missing parentheses" do
+      sql = "INSERT INTO users VALUES 1"
+
+      assert Parser.parse(sql) ==
+               {:error,
+                "Expected %ExDb.SQL.Token{type: :punctuation, value: \"(\"} but got %ExDb.SQL.Token{type: :literal, value: %ExDb.SQL.Token.Literal{type: :number, value: 1}}"}
+    end
+
+    test "returns error for extra tokens after INSERT" do
+      sql = "INSERT INTO users VALUES (1) extra"
+
+      assert Parser.parse(sql) == {:error, "Unexpected tokens after INSERT statement"}
+    end
+
+    test "returns error for empty VALUES list" do
+      sql = "INSERT INTO users VALUES ()"
+
+      assert Parser.parse(sql) == {:error, "Expected literal value, got punctuation"}
     end
   end
 end

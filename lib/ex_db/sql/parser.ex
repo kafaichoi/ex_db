@@ -6,7 +6,7 @@ defmodule ExDb.SQL.Parser do
   defstruct [:tokens, :current]
 
   alias ExDb.SQL.{Tokenizer, Token}
-  alias ExDb.SQL.AST.{SelectStatement, Table, Literal, Column, BinaryOp}
+  alias ExDb.SQL.AST.{SelectStatement, InsertStatement, Table, Literal, Column, BinaryOp}
 
   @doc """
   Parses a SQL string into an AST.
@@ -45,6 +45,9 @@ defmodule ExDb.SQL.Parser do
     case peek(parser) do
       %Token{type: :keyword, value: "SELECT"} ->
         parse_select_statement(parser)
+
+      %Token{type: :keyword, value: "INSERT"} ->
+        parse_insert_statement(parser)
 
       token ->
         {:error, "Unexpected token: #{inspect(token)}"}
@@ -87,6 +90,61 @@ defmodule ExDb.SQL.Parser do
     else
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp parse_insert_statement(parser) do
+    with {:ok, parser} <- consume(parser, Token.insert()),
+         {:ok, parser} <- consume(parser, Token.into()),
+         {:ok, {table, parser}} <- parse_table_name(parser),
+         {:ok, parser} <- consume(parser, Token.values()),
+         {:ok, parser} <- consume(parser, Token.left_paren()),
+         {:ok, {values, parser}} <- parse_values_list(parser),
+         {:ok, parser} <- consume(parser, Token.right_paren()) do
+      # Validate that all tokens are consumed
+      case peek(parser) do
+        %Token{type: :eof} ->
+          {:ok, %InsertStatement{table: table, values: values}}
+
+        _token ->
+          {:error, "Unexpected tokens after INSERT statement"}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_values_list(parser) do
+    do_parse_values_list(parser, [])
+  end
+
+  defp do_parse_values_list(parser, values) do
+    with {:ok, {value, parser}} <- parse_literal_value(parser) do
+      case consume(parser, Token.comma()) do
+        {:ok, parser} ->
+          do_parse_values_list(parser, [value | values])
+
+        {:error, _} ->
+          {:ok, {Enum.reverse([value | values]), parser}}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_literal_value(parser) do
+    case advance(parser) do
+      {%Token{type: :literal, value: %Token.Literal{type: type, value: value}}, parser} ->
+        literal = %Literal{type: type, value: value}
+        {:ok, {literal, parser}}
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected literal value, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected literal value"}
     end
   end
 

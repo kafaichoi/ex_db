@@ -5,7 +5,7 @@ defmodule ExDb.SQL.Tokenizer do
 
   alias ExDb.SQL.Token
 
-  @keywords ~w(SELECT FROM WHERE AND OR)
+  @keywords ~w(SELECT FROM WHERE AND OR INSERT INTO VALUES)
 
   @doc """
   Tokenizes a SQL string into a list of tokens.
@@ -64,7 +64,7 @@ defmodule ExDb.SQL.Tokenizer do
   end
 
   # Single-character operators and punctuation
-  defp do_tokenize(<<char, rest::binary>>, acc) when char in [?=, ?<, ?>, ?*, ?,] do
+  defp do_tokenize(<<char, rest::binary>>, acc) when char in [?=, ?<, ?>, ?*, ?,, ?(, ?)] do
     token = %Token{type: token_type_for_char(char), value: <<char>>}
     do_tokenize(rest, [token | acc])
   end
@@ -129,6 +129,8 @@ defmodule ExDb.SQL.Tokenizer do
 
   # Determine token type for single character
   defp token_type_for_char(?,), do: :punctuation
+  defp token_type_for_char(?(), do: :punctuation
+  defp token_type_for_char(?)), do: :punctuation
   defp token_type_for_char(_), do: :operator
 
   # Determine if word is keyword or identifier
