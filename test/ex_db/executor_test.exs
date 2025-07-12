@@ -206,5 +206,128 @@ defmodule ExDb.ExecutorTest do
       # CREATE TABLE should return {:ok, adapter} like INSERT
       assert {:ok, {InMemory, _new_storage_state}} = Executor.execute(create_ast, adapter)
     end
+
+    test "CREATE TABLE with column definitions", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      {:ok, create_ast} =
+        Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR(255), email TEXT)")
+
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Verify table was created with schema
+      {_module, storage_state} = adapter
+      assert InMemory.table_exists?(storage_state, "users") == true
+
+      # Verify schema was stored
+      {:ok, schema, _storage_state} = InMemory.get_table_schema(storage_state, "users")
+      assert length(schema) == 3
+      assert Enum.at(schema, 0).name == "id"
+      assert Enum.at(schema, 0).type == :integer
+      assert Enum.at(schema, 1).name == "name"
+      assert Enum.at(schema, 1).type == :varchar
+      assert Enum.at(schema, 1).size == 255
+      assert Enum.at(schema, 2).name == "email"
+      assert Enum.at(schema, 2).type == :text
+    end
+  end
+
+  describe "Schema validation" do
+    test "INSERT validates column count", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table with schema
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name TEXT)")
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Try to insert wrong number of values
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1)")
+
+      assert {:error, {:column_count_mismatch, 1, 2}} = Executor.execute(insert_ast, adapter)
+    end
+
+    test "INSERT validates column types", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table with schema
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name TEXT)")
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Try to insert wrong type
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES ('not_a_number', 'John')")
+
+      assert {:error, {:type_mismatch, "id", :text, :integer}} =
+               Executor.execute(insert_ast, adapter)
+    end
+
+    test "INSERT validates VARCHAR length", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table with VARCHAR size constraint
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR(5))")
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Try to insert string that's too long
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, 'This is too long')")
+
+      assert {:error, {:value_too_long, "name", 16, 5}} = Executor.execute(insert_ast, adapter)
+    end
+
+    test "INSERT succeeds with valid data", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table with schema
+      {:ok, create_ast} =
+        Parser.parse("CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)")
+
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Insert valid data
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, 'John', true)")
+      {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+      # Verify data was inserted
+      {:ok, select_ast} = Parser.parse("SELECT * FROM users")
+      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+
+      assert result == [[1, "John", true]]
+    end
+
+    test "INSERT with VARCHAR without size constraint", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table with VARCHAR without size (defaults to 255)
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR)")
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Insert string that's under 255 characters
+      long_string = String.duplicate("A", 250)
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, '#{long_string}')")
+      {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+      # Verify it was inserted
+      {:ok, select_ast} = Parser.parse("SELECT * FROM users")
+      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+
+      assert result == [[1, long_string]]
+    end
+
+    test "Legacy tables without schema skip validation", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create legacy table without schema
+      {:ok, storage_state} = InMemory.create_table(storage_state, "legacy_table")
+      adapter = {InMemory, storage_state}
+
+      # Insert should work without validation
+      {:ok, insert_ast} = Parser.parse("INSERT INTO legacy_table VALUES (1, 'test', 'extra')")
+      {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+      # Verify data was inserted
+      {:ok, select_ast} = Parser.parse("SELECT * FROM legacy_table")
+      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+
+      assert result == [[1, "test", "extra"]]
+    end
   end
 end

@@ -3,7 +3,7 @@ defmodule ExDb.SQL.ParserTest do
 
   alias ExDb.SQL.Parser
   alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryOp}
-  alias ExDb.SQL.AST.{InsertStatement, CreateTableStatement}
+  alias ExDb.SQL.AST.{InsertStatement, CreateTableStatement, ColumnDefinition}
 
   describe "parse/1 with literal SELECT statements" do
     test "parses SELECT with number literal" do
@@ -687,13 +687,114 @@ defmodule ExDb.SQL.ParserTest do
     test "returns error for extra tokens after table name" do
       sql = "CREATE TABLE users extra"
 
-      assert Parser.parse(sql) == {:error, "Unexpected tokens after table name"}
+      assert Parser.parse(sql) ==
+               {:error, "Expected column definitions in parentheses or end of statement"}
     end
 
     test "returns error for invalid table name" do
       sql = "CREATE TABLE 123"
 
       assert Parser.parse(sql) == {:error, "Expected table name, got literal"}
+    end
+
+    test "parses CREATE TABLE with column definitions" do
+      sql = "CREATE TABLE users (id INTEGER, name VARCHAR(255), email TEXT)"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "users"},
+        columns: [
+          %ColumnDefinition{name: "id", type: :integer, size: nil},
+          %ColumnDefinition{name: "name", type: :varchar, size: 255},
+          %ColumnDefinition{name: "email", type: :text, size: nil}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses CREATE TABLE with single column" do
+      sql = "CREATE TABLE test (id INTEGER)"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "test"},
+        columns: [
+          %ColumnDefinition{name: "id", type: :integer, size: nil}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses CREATE TABLE with VARCHAR without size" do
+      sql = "CREATE TABLE users (name VARCHAR)"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "users"},
+        columns: [
+          %ColumnDefinition{name: "name", type: :varchar, size: 255}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses CREATE TABLE with BOOLEAN column" do
+      sql = "CREATE TABLE flags (active BOOLEAN)"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "flags"},
+        columns: [
+          %ColumnDefinition{name: "active", type: :boolean, size: nil}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "returns error for invalid column name" do
+      sql = "CREATE TABLE test (123 INTEGER)"
+
+      assert Parser.parse(sql) == {:error, "Expected column name, got literal"}
+    end
+
+    test "returns error for invalid column type" do
+      sql = "CREATE TABLE test (id INVALID)"
+
+      assert Parser.parse(sql) == {:error, "Expected column type, got identifier"}
+    end
+
+    test "returns error for missing closing parenthesis" do
+      sql = "CREATE TABLE test (id INTEGER"
+
+      assert Parser.parse(sql) ==
+               {:error,
+                "Expected %ExDb.SQL.Token{type: :punctuation, value: \")\"} but got %ExDb.SQL.Token{type: :eof, value: nil}"}
+    end
+
+    test "parses CREATE TABLE with column definitions and semicolon" do
+      sql = "CREATE TABLE test (id INTEGER);"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "test"},
+        columns: [
+          %ColumnDefinition{name: "id", type: :integer, size: nil}
+        ]
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "debug tokenizer output for CREATE TABLE" do
+      sql = "CREATE TABLE test (id INTEGER);"
+
+      case ExDb.SQL.Tokenizer.tokenize(sql) do
+        {:ok, tokens} ->
+          IO.puts("Tokens: #{inspect(tokens)}")
+          assert length(tokens) > 0
+
+        {:error, reason} ->
+          flunk("Tokenizer failed: #{reason}")
+      end
     end
   end
 end

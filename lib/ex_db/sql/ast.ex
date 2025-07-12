@@ -14,6 +14,21 @@ defmodule ExDb.SQL.AST do
           }
   end
 
+  defmodule ColumnDefinition do
+    @moduledoc """
+    Represents a column definition in a CREATE TABLE statement.
+    """
+    defstruct [:name, :type, :size]
+
+    @type column_type :: :integer | :varchar | :text | :boolean
+
+    @type t :: %__MODULE__{
+            name: String.t(),
+            type: column_type(),
+            size: integer() | nil
+          }
+  end
+
   defmodule Table do
     @moduledoc """
     Represents a table reference.
@@ -89,7 +104,7 @@ defmodule ExDb.SQL.AST do
 
     @type t :: %__MODULE__{
             table: Table.t(),
-            columns: [Column.t()] | nil
+            columns: [ColumnDefinition.t()] | nil
           }
   end
 end

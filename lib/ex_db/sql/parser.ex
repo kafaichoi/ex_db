@@ -11,6 +11,7 @@ defmodule ExDb.SQL.Parser do
     SelectStatement,
     InsertStatement,
     CreateTableStatement,
+    ColumnDefinition,
     Table,
     Literal,
     Column,
@@ -131,18 +132,134 @@ defmodule ExDb.SQL.Parser do
     with {:ok, parser} <- consume(parser, Token.create()),
          {:ok, parser} <- consume(parser, Token.table()),
          {:ok, {table, parser}} <- parse_table_name(parser) do
-      # For now, we'll support simple CREATE TABLE without column definitions
-      # Validate that all tokens are consumed
+      # Check for column definitions in parentheses
       case peek(parser) do
+        %Token{type: :punctuation, value: "("} ->
+          # Parse column definitions
+          with {:ok, parser} <- consume(parser, Token.left_paren()),
+               {:ok, {columns, parser}} <- parse_column_definitions(parser),
+               {:ok, parser} <- consume(parser, Token.right_paren()) do
+            # Validate that all tokens are consumed
+            case peek(parser) do
+              %Token{type: :eof} ->
+                {:ok, %CreateTableStatement{table: table, columns: columns}}
+
+              _token ->
+                {:error, "Unexpected tokens after column definitions"}
+            end
+          else
+            {:error, reason} ->
+              {:error, reason}
+          end
+
         %Token{type: :eof} ->
+          # Support legacy syntax without column definitions
           {:ok, %CreateTableStatement{table: table, columns: nil}}
 
         _token ->
-          {:error, "Unexpected tokens after table name"}
+          {:error, "Expected column definitions in parentheses or end of statement"}
       end
     else
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp parse_column_definitions(parser) do
+    do_parse_column_definitions(parser, [])
+  end
+
+  defp do_parse_column_definitions(parser, columns) do
+    with {:ok, {column, parser}} <- parse_column_definition(parser) do
+      case consume(parser, Token.comma()) do
+        {:ok, parser} ->
+          do_parse_column_definitions(parser, [column | columns])
+
+        {:error, _} ->
+          {:ok, {Enum.reverse([column | columns]), parser}}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_column_definition(parser) do
+    with {:ok, {column_name, parser}} <- parse_column_name(parser),
+         {:ok, {column_type, size, parser}} <- parse_column_type(parser) do
+      column_def = %ColumnDefinition{
+        name: column_name,
+        type: column_type,
+        size: size
+      }
+
+      {:ok, {column_def, parser}}
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_column_name(parser) do
+    case advance(parser) do
+      {%Token{type: :identifier, value: column_name}, parser} ->
+        {:ok, {column_name, parser}}
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected column name, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected column name"}
+    end
+  end
+
+  defp parse_column_type(parser) do
+    case advance(parser) do
+      {%Token{type: :keyword, value: "INTEGER"}, parser} ->
+        {:ok, {:integer, nil, parser}}
+
+      {%Token{type: :keyword, value: "TEXT"}, parser} ->
+        {:ok, {:text, nil, parser}}
+
+      {%Token{type: :keyword, value: "BOOLEAN"}, parser} ->
+        {:ok, {:boolean, nil, parser}}
+
+      {%Token{type: :keyword, value: "VARCHAR"}, parser} ->
+        # Handle VARCHAR with optional size specification
+        case peek(parser) do
+          %Token{type: :punctuation, value: "("} ->
+            with {:ok, parser} <- consume(parser, Token.left_paren()),
+                 {:ok, {size, parser}} <- parse_varchar_size(parser),
+                 {:ok, parser} <- consume(parser, Token.right_paren()) do
+              {:ok, {:varchar, size, parser}}
+            else
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          _ ->
+            # VARCHAR without size defaults to 255
+            {:ok, {:varchar, 255, parser}}
+        end
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected column type, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected column type"}
+    end
+  end
+
+  defp parse_varchar_size(parser) do
+    case advance(parser) do
+      {%Token{type: :literal, value: %Token.Literal{type: :number, value: size}}, parser} ->
+        {:ok, {size, parser}}
+
+      {token, _parser} when token != nil ->
+        {:error, "Expected number for VARCHAR size, got #{token.type}"}
+
+      {nil, _parser} ->
+        {:error, "Expected number for VARCHAR size"}
     end
   end
 

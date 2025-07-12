@@ -11,8 +11,8 @@ defmodule ExDb.SQL.Token do
     defstruct [:type, :value]
 
     @type t :: %__MODULE__{
-            type: :number | :string,
-            value: number() | String.t()
+            type: :number | :string | :boolean,
+            value: number() | String.t() | boolean()
           }
   end
 
@@ -67,6 +67,22 @@ defmodule ExDb.SQL.Token do
 
   def table() do
     %__MODULE__{type: :keyword, value: "TABLE"}
+  end
+
+  def integer() do
+    %__MODULE__{type: :keyword, value: "INTEGER"}
+  end
+
+  def varchar() do
+    %__MODULE__{type: :keyword, value: "VARCHAR"}
+  end
+
+  def text() do
+    %__MODULE__{type: :keyword, value: "TEXT"}
+  end
+
+  def boolean() do
+    %__MODULE__{type: :keyword, value: "BOOLEAN"}
   end
 
   def left_paren() do

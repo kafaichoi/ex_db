@@ -176,18 +176,29 @@ defmodule ExDbTest do
     :gen_tcp.close(socket)
   end
 
-  test "server responds with error for unsupported query but keeps connection open", %{port: port} do
+  test "server supports CREATE TABLE with column definitions and INSERT", %{port: port} do
     alias ExDb.Wire.ResponseParser
 
     {:ok, socket} = :gen_tcp.connect(~c"localhost", port, [:binary, active: false])
 
     # Startup handshake
     protocol_version = <<3::16, 0::16>>
-    params = [{"user", "postgres"}]
 
+    # Common parameters that psql sends
+    params = [
+      {"user", "postgres"}
+      # {"database", "testdb"},
+      # {"application_name", "psql"},
+      # {"client_encoding", "UTF8"}
+    ]
+
+    # Build parameter string
     param_string =
-      Enum.map_join(params, "", fn {key, value} -> key <> <<0>> <> value <> <<0>> end)
+      Enum.map_join(params, "", fn {key, value} ->
+        key <> <<0>> <> value <> <<0>>
+      end)
 
+    # Build complete packet
     payload = protocol_version <> param_string <> <<0>>
     packet_len = byte_size(payload) + 4
     startup_packet = <<packet_len::32, payload::binary>>
@@ -196,13 +207,13 @@ defmodule ExDbTest do
     # Read and discard handshake response
     _ = receive_all(socket, 1000)
 
-    # Send an unsupported query: CREATE TABLE
+    # Send a CREATE TABLE query (should now succeed)
     query = "CREATE TABLE test (id INTEGER);"
     query_packet = <<?Q, byte_size(query) + 5::32, query::binary, 0>>
 
     :ok = :gen_tcp.send(socket, query_packet)
 
-    # Read the response (should be ErrorResponse, ReadyForQuery)
+    # Read the response (should be CommandComplete, ReadyForQuery)
     response = receive_all(socket, 1000)
 
     # Parse the response into individual messages
@@ -211,32 +222,30 @@ defmodule ExDbTest do
         flunk("Failed to parse response: #{inspect(reason)}")
 
       messages ->
-        [error_msg, ready] = messages
+        [cmd_complete, ready] = messages
 
-        # Check ErrorResponse
-        assert %ExDb.Wire.ErrorMessage{} = error_msg
-        assert error_msg.severity == "ERROR"
-        assert error_msg.code == "0A000"
-        assert error_msg.message =~ "query not supported"
+        # Check CommandComplete for CREATE TABLE
+        assert %ExDb.Wire.Messages.CommandComplete{tag: "CREATE TABLE"} = cmd_complete
 
         # Check ReadyForQuery - connection should still be ready
         assert ready == :ready_for_query
     end
 
-    # Test that connection is still open by sending another query
-    query2 = "SELECT 1;"
-    query_packet2 = <<?Q, byte_size(query2) + 5::32, query2::binary, 0>>
-    :ok = :gen_tcp.send(socket, query_packet2)
+    # Test that we can INSERT into the created table
+    insert_query = "INSERT INTO test VALUES (1);"
+    insert_packet = <<?Q, byte_size(insert_query) + 5::32, insert_query::binary, 0>>
+    :ok = :gen_tcp.send(socket, insert_packet)
 
     # Should get successful response
     response2 = receive_all(socket, 1000)
 
     case ResponseParser.parse_response(response2) do
       {:error, reason} ->
-        flunk("Failed to parse second response: #{inspect(reason)}")
+        flunk("Failed to parse insert response: #{inspect(reason)}")
 
       messages ->
-        [_row_desc, _data_row, _cmd_complete, ready] = messages
+        [cmd_complete, ready] = messages
+        assert %ExDb.Wire.Messages.CommandComplete{tag: "INSERT 0 1"} = cmd_complete
         assert ready == :ready_for_query
     end
 

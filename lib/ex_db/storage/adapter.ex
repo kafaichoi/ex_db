@@ -8,11 +8,15 @@ defmodule ExDb.Storage.Adapter do
   """
 
   @doc """
-  Creates a new table with the given name.
+  Creates a new table with the given name and optional column definitions.
 
   Returns the updated adapter state on success.
   """
-  @callback create_table(adapter_state :: term(), table_name :: String.t()) ::
+  @callback create_table(
+              adapter_state :: term(),
+              table_name :: String.t(),
+              columns :: [ExDb.SQL.AST.ColumnDefinition.t()] | nil
+            ) ::
               {:ok, term()} | {:error, term()}
 
   @doc """
@@ -20,6 +24,14 @@ defmodule ExDb.Storage.Adapter do
   """
   @callback table_exists?(adapter_state :: term(), table_name :: String.t()) ::
               boolean()
+
+  @doc """
+  Gets the schema (column definitions) for a table.
+
+  Returns the list of column definitions and the adapter state.
+  """
+  @callback get_table_schema(adapter_state :: term(), table_name :: String.t()) ::
+              {:ok, [ExDb.SQL.AST.ColumnDefinition.t()], term()} | {:error, term()}
 
   @doc """
   Inserts a row of values into the specified table.

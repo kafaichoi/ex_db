@@ -9,6 +9,7 @@ defmodule ExDb.Storage.InMemory do
   State structure:
   %{
     tables: %{"table_name" => ets_table_ref},
+    schemas: %{"table_name" => [%ExDb.SQL.AST.ColumnDefinition{}, ...]},
     next_table_id: integer()
   }
 
@@ -23,12 +24,13 @@ defmodule ExDb.Storage.InMemory do
   def new() do
     %{
       tables: %{},
+      schemas: %{},
       next_table_id: 1
     }
   end
 
   @impl ExDb.Storage.Adapter
-  def create_table(state, table_name) when is_binary(table_name) do
+  def create_table(state, table_name, columns) when is_binary(table_name) do
     case Map.has_key?(state.tables, table_name) do
       true ->
         {:error, {:table_already_exists, table_name}}
@@ -41,6 +43,7 @@ defmodule ExDb.Storage.InMemory do
         new_state = %{
           state
           | tables: Map.put(state.tables, table_name, ets_ref),
+            schemas: Map.put(state.schemas, table_name, columns),
             next_table_id: state.next_table_id + 1
         }
 
@@ -51,6 +54,17 @@ defmodule ExDb.Storage.InMemory do
   @impl ExDb.Storage.Adapter
   def table_exists?(state, table_name) when is_binary(table_name) do
     Map.has_key?(state.tables, table_name)
+  end
+
+  @impl ExDb.Storage.Adapter
+  def get_table_schema(state, table_name) when is_binary(table_name) do
+    case Map.get(state.schemas, table_name) do
+      nil ->
+        {:error, {:table_not_found, table_name}}
+
+      schema ->
+        {:ok, schema, state}
+    end
   end
 
   @impl ExDb.Storage.Adapter
@@ -101,12 +115,14 @@ defmodule ExDb.Storage.InMemory do
 
       ets_ref ->
         row_count = :ets.info(ets_ref, :size)
+        schema = Map.get(state.schemas, table_name)
 
         info = %{
           name: table_name,
           type: :table,
           row_count: row_count,
-          storage: :ets
+          storage: :ets,
+          schema: schema
         }
 
         {:ok, info, state}
@@ -117,5 +133,10 @@ defmodule ExDb.Storage.InMemory do
   defp get_next_row_id(ets_ref) do
     # Use table size + 1 for next row ID (simple auto-increment)
     :ets.info(ets_ref, :size) + 1
+  end
+
+  # Legacy create_table function for backward compatibility
+  def create_table(state, table_name) when is_binary(table_name) do
+    create_table(state, table_name, nil)
   end
 end

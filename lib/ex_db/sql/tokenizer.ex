@@ -5,7 +5,7 @@ defmodule ExDb.SQL.Tokenizer do
 
   alias ExDb.SQL.Token
 
-  @keywords ~w(SELECT FROM WHERE AND OR INSERT INTO VALUES CREATE TABLE)
+  @keywords ~w(SELECT FROM WHERE AND OR INSERT INTO VALUES CREATE TABLE INTEGER VARCHAR TEXT BOOLEAN TRUE FALSE)
 
   @doc """
   Tokenizes a SQL string into a list of tokens.
@@ -85,7 +85,15 @@ defmodule ExDb.SQL.Tokenizer do
   defp do_tokenize(<<char, _::binary>> = input, acc)
        when char in ?a..?z or char in ?A..?Z or char == ?_ do
     {value, remaining} = extract_identifier(input, "")
-    token = %Token{type: token_type_for_word(value), value: normalize_keyword(value)}
+
+    # Handle boolean literals specially
+    token =
+      case String.upcase(value) do
+        "TRUE" -> Token.literal(:boolean, true)
+        "FALSE" -> Token.literal(:boolean, false)
+        _ -> %Token{type: token_type_for_word(value), value: normalize_keyword(value)}
+      end
+
     do_tokenize(remaining, [token | acc])
   end
 

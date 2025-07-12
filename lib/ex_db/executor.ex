@@ -52,9 +52,33 @@ defmodule ExDb.Executor do
         # Convert literal values to their actual values
         row_values = Enum.map(values, fn %{value: value} -> value end)
 
-        case adapter_module.insert_row(adapter_state, table_name, row_values) do
-          {:ok, new_adapter_state} ->
-            {:ok, {adapter_module, new_adapter_state}}
+        # Try to get table schema for validation (if it exists)
+        case adapter_module.get_table_schema(adapter_state, table_name) do
+          {:ok, schema, adapter_state} ->
+            # Validate values against schema
+            case validate_insert_values(row_values, schema) do
+              :ok ->
+                case adapter_module.insert_row(adapter_state, table_name, row_values) do
+                  {:ok, new_adapter_state} ->
+                    {:ok, {adapter_module, new_adapter_state}}
+
+                  {:error, reason} ->
+                    {:error, reason}
+                end
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          {:error, {:table_not_found, _}} ->
+            # Legacy table without schema, skip validation
+            case adapter_module.insert_row(adapter_state, table_name, row_values) do
+              {:ok, new_adapter_state} ->
+                {:ok, {adapter_module, new_adapter_state}}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
 
           {:error, reason} ->
             {:error, reason}
@@ -94,7 +118,10 @@ defmodule ExDb.Executor do
     end
   end
 
-  defp execute_create_table(%CreateTableStatement{table: table}, {adapter_module, adapter_state}) do
+  defp execute_create_table(
+         %CreateTableStatement{table: table, columns: columns},
+         {adapter_module, adapter_state}
+       ) do
     table_name = table.name
 
     case adapter_module.table_exists?(adapter_state, table_name) do
@@ -102,13 +129,73 @@ defmodule ExDb.Executor do
         {:error, {:table_already_exists, table_name}}
 
       false ->
-        case adapter_module.create_table(adapter_state, table_name) do
+        case adapter_module.create_table(adapter_state, table_name, columns) do
           {:ok, new_adapter_state} ->
             {:ok, {adapter_module, new_adapter_state}}
 
           {:error, reason} ->
             {:error, reason}
         end
+    end
+  end
+
+  # Validate INSERT values against table schema
+  defp validate_insert_values(values, schema) do
+    # If no schema (legacy table), skip validation
+    if schema == nil do
+      :ok
+    else
+      # Check column count
+      if length(values) != length(schema) do
+        {:error, {:column_count_mismatch, length(values), length(schema)}}
+      else
+        # Validate each value against its column type
+        validate_column_types(values, schema)
+      end
+    end
+  end
+
+  defp validate_column_types(values, schema) do
+    values
+    |> Enum.zip(schema)
+    |> Enum.reduce_while(:ok, fn {value, column_def}, acc ->
+      case validate_value_type(value, column_def) do
+        :ok -> {:cont, acc}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp validate_value_type(value, column_def) do
+    case {value, column_def.type} do
+      {val, :integer} when is_integer(val) ->
+        :ok
+
+      {val, :text} when is_binary(val) ->
+        :ok
+
+      {val, :varchar} when is_binary(val) ->
+        # Check length constraint if specified
+        if column_def.size && String.length(val) > column_def.size do
+          {:error, {:value_too_long, column_def.name, String.length(val), column_def.size}}
+        else
+          :ok
+        end
+
+      {val, :boolean} when is_boolean(val) ->
+        :ok
+
+      {val, expected_type} ->
+        actual_type =
+          cond do
+            is_integer(val) -> :integer
+            is_binary(val) -> :text
+            is_boolean(val) -> :boolean
+            is_float(val) -> :float
+            true -> :unknown
+          end
+
+        {:error, {:type_mismatch, column_def.name, actual_type, expected_type}}
     end
   end
 
