@@ -22,7 +22,7 @@ defmodule ExDb.Executor do
   """
   @spec execute(InsertStatement.t() | SelectStatement.t(), {module(), any()}) ::
           {:ok, {module(), any()}} | {:ok, list(list()), {module(), any()}} | {:error, any()}
-  def execute(ast,     adapter)
+  def execute(ast, adapter)
 
   def execute(%InsertStatement{} = insert_stmt, adapter) do
     execute_insert(insert_stmt, adapter)
