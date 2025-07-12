@@ -61,7 +61,7 @@ defmodule ExDb.ExecutorTest do
       {:ok, insert_ast} = Parser.parse("INSERT INTO nonexistent VALUES (1, 'test')")
 
       assert {:error, {:table_not_found, "nonexistent"}} =
-        Executor.execute(insert_ast, adapter)
+               Executor.execute(insert_ast, adapter)
     end
 
     test "SELECT from non-existing table returns error", %{storage_state: storage_state} do
@@ -70,7 +70,7 @@ defmodule ExDb.ExecutorTest do
       {:ok, select_ast} = Parser.parse("SELECT * FROM nonexistent")
 
       assert {:error, {:table_not_found, "nonexistent"}} =
-        Executor.execute(select_ast, adapter)
+               Executor.execute(select_ast, adapter)
     end
 
     test "SELECT from empty table returns empty result", %{storage_state: storage_state} do
@@ -94,7 +94,9 @@ defmodule ExDb.ExecutorTest do
       adapter = {InMemory, storage_state}
 
       # Insert with mixed types (number, string, string)
-      {:ok, insert_ast} = Parser.parse("INSERT INTO products VALUES (42, 'Widget', 'Electronics')")
+      {:ok, insert_ast} =
+        Parser.parse("INSERT INTO products VALUES (42, 'Widget', 'Electronics')")
+
       {:ok, adapter} = Executor.execute(insert_ast, adapter)
 
       # Select and verify

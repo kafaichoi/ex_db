@@ -13,13 +13,13 @@ defmodule ExDb.Storage.Adapter do
   Returns the updated adapter state on success.
   """
   @callback create_table(adapter_state :: term(), table_name :: String.t()) ::
-    {:ok, term()} | {:error, term()}
+              {:ok, term()} | {:error, term()}
 
   @doc """
   Checks if a table with the given name exists.
   """
   @callback table_exists?(adapter_state :: term(), table_name :: String.t()) ::
-    boolean()
+              boolean()
 
   @doc """
   Inserts a row of values into the specified table.
@@ -28,7 +28,7 @@ defmodule ExDb.Storage.Adapter do
   Returns the updated adapter state on success.
   """
   @callback insert_row(adapter_state :: term(), table_name :: String.t(), values :: [term()]) ::
-    {:ok, term()} | {:error, term()}
+              {:ok, term()} | {:error, term()}
 
   @doc """
   Retrieves all rows from the specified table.
@@ -36,7 +36,7 @@ defmodule ExDb.Storage.Adapter do
   Returns a list of rows (where each row is a list of values) and the adapter state.
   """
   @callback select_all_rows(adapter_state :: term(), table_name :: String.t()) ::
-    {:ok, [list()], term()} | {:error, term()}
+              {:ok, [list()], term()} | {:error, term()}
 
   @doc """
   Gets basic information about a table structure.
@@ -45,5 +45,5 @@ defmodule ExDb.Storage.Adapter do
   as we add schema support.
   """
   @callback table_info(adapter_state :: term(), table_name :: String.t()) ::
-    {:ok, map(), term()} | {:error, term()}
+              {:ok, map(), term()} | {:error, term()}
 end

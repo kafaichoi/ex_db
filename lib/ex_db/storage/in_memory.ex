@@ -39,9 +39,9 @@ defmodule ExDb.Storage.InMemory do
         ets_ref = :ets.new(ets_table_name, [:set, :public, {:keypos, 1}])
 
         new_state = %{
-          state |
-          tables: Map.put(state.tables, table_name, ets_ref),
-          next_table_id: state.next_table_id + 1
+          state
+          | tables: Map.put(state.tables, table_name, ets_ref),
+            next_table_id: state.next_table_id + 1
         }
 
         {:ok, new_state}

@@ -29,7 +29,7 @@ defmodule ExDb.Storage.InMemoryTest do
       {:ok, state} = InMemory.create_table(state, "users")
 
       assert {:error, {:table_already_exists, "users"}} =
-        InMemory.create_table(state, "users")
+               InMemory.create_table(state, "users")
     end
   end
 
@@ -54,7 +54,7 @@ defmodule ExDb.Storage.InMemoryTest do
 
     test "returns error when inserting into non-existing table", %{state: state} do
       assert {:error, {:table_not_found, "users"}} =
-        InMemory.insert_row(state, "users", [1, "John"])
+               InMemory.insert_row(state, "users", [1, "John"])
     end
 
     test "allows multiple rows in the same table", %{state: state} do
@@ -87,7 +87,7 @@ defmodule ExDb.Storage.InMemoryTest do
 
     test "returns error for non-existing table", %{state: state} do
       assert {:error, {:table_not_found, "users"}} =
-        InMemory.select_all_rows(state, "users")
+               InMemory.select_all_rows(state, "users")
     end
 
     test "rows are sorted by first column when numeric", %{state: state} do
@@ -99,10 +99,10 @@ defmodule ExDb.Storage.InMemoryTest do
       {:ok, rows, _state} = InMemory.select_all_rows(state, "users")
 
       assert rows == [
-        [1, "Alice"],
-        [2, "Bob"],
-        [3, "Charlie"]
-      ]
+               [1, "Alice"],
+               [2, "Bob"],
+               [3, "Charlie"]
+             ]
     end
   end
 
@@ -121,7 +121,7 @@ defmodule ExDb.Storage.InMemoryTest do
 
     test "returns error for non-existing table", %{state: state} do
       assert {:error, {:table_not_found, "users"}} =
-        InMemory.table_info(state, "users")
+               InMemory.table_info(state, "users")
     end
   end
 
