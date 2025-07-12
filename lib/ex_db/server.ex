@@ -2,6 +2,7 @@ defmodule ExDb.Server do
   use GenServer
 
   alias ExDb.Wire.Protocol
+  alias ExDb.Storage.InMemory
 
   require Logger
 
@@ -16,17 +17,20 @@ defmodule ExDb.Server do
     {:ok, listen_socket} =
       :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
 
-    spawn_link(fn -> accept_loop(listen_socket) end)
-    {:ok, %{listen_socket: listen_socket, port: port}}
+    # Initialize storage state
+    storage_state = InMemory.new()
+
+    spawn_link(fn -> accept_loop(listen_socket, storage_state) end)
+    {:ok, %{listen_socket: listen_socket, port: port, storage_state: storage_state}}
   end
 
-  defp accept_loop(listen_socket) do
+  defp accept_loop(listen_socket, storage_state) do
     {:ok, socket} = :gen_tcp.accept(listen_socket)
-    spawn_link(fn -> handle_client(socket) end)
-    accept_loop(listen_socket)
+    spawn_link(fn -> handle_client(socket, storage_state) end)
+    accept_loop(listen_socket, storage_state)
   end
 
-  defp handle_client(socket) do
+  defp handle_client(socket, storage_state) do
     {:ok, {address, port}} = :inet.peername(socket)
     client_info = "#{:inet_parse.ntoa(address)}:#{port}"
     Logger.info("New connection from #{client_info}")
@@ -38,7 +42,7 @@ defmodule ExDb.Server do
         )
 
         # Keep connection open for queries
-        handle_queries(socket, client_info)
+        handle_queries(socket, client_info, storage_state)
 
       {:error, :invalid_protocol, protocol_version} ->
         Logger.warning(
@@ -57,11 +61,11 @@ defmodule ExDb.Server do
     end
   end
 
-  defp handle_queries(socket, client_info) do
-    case Protocol.handle_query(socket) do
-      :ok ->
+  defp handle_queries(socket, client_info, storage_state) do
+    case Protocol.handle_query(socket, storage_state) do
+      {:ok, new_storage_state} ->
         # Query handled successfully, continue listening for more queries
-        handle_queries(socket, client_info)
+        handle_queries(socket, client_info, new_storage_state)
 
       {:error, :closed} ->
         Logger.info("Connection #{client_info} closed by client")

@@ -3,7 +3,7 @@ defmodule ExDb.SQL.ParserTest do
 
   alias ExDb.SQL.Parser
   alias ExDb.SQL.AST.{SelectStatement, Column, Table, Literal, BinaryOp}
-  alias ExDb.SQL.AST.InsertStatement
+  alias ExDb.SQL.AST.{InsertStatement, CreateTableStatement}
 
   describe "parse/1 with literal SELECT statements" do
     test "parses SELECT with number literal" do
@@ -622,6 +622,78 @@ defmodule ExDb.SQL.ParserTest do
       sql = "INSERT INTO users VALUES ()"
 
       assert Parser.parse(sql) == {:error, "Expected literal value, got punctuation"}
+    end
+  end
+
+  describe "parse/1 CREATE TABLE statements" do
+    test "parses simple CREATE TABLE statement" do
+      sql = "CREATE TABLE users"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "users"},
+        columns: nil
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "parses CREATE TABLE with different table name" do
+      sql = "CREATE TABLE products"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "products"},
+        columns: nil
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "handles case-insensitive CREATE TABLE keywords" do
+      sql = "create table Users"
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "Users"},
+        columns: nil
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "handles extra whitespace" do
+      sql = "  CREATE   TABLE   orders  "
+
+      expected = %CreateTableStatement{
+        table: %Table{name: "orders"},
+        columns: nil
+      }
+
+      assert Parser.parse(sql) == {:ok, expected}
+    end
+
+    test "returns error for missing TABLE keyword" do
+      sql = "CREATE users"
+
+      assert Parser.parse(sql) ==
+               {:error,
+                "Expected %ExDb.SQL.Token{type: :keyword, value: \"TABLE\"} but got %ExDb.SQL.Token{type: :identifier, value: \"users\"}"}
+    end
+
+    test "returns error for missing table name" do
+      sql = "CREATE TABLE"
+
+      assert Parser.parse(sql) == {:error, "Expected table name after FROM"}
+    end
+
+    test "returns error for extra tokens after table name" do
+      sql = "CREATE TABLE users extra"
+
+      assert Parser.parse(sql) == {:error, "Unexpected tokens after table name"}
+    end
+
+    test "returns error for invalid table name" do
+      sql = "CREATE TABLE 123"
+
+      assert Parser.parse(sql) == {:error, "Expected table name, got literal"}
     end
   end
 end

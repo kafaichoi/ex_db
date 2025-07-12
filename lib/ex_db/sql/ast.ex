@@ -80,4 +80,16 @@ defmodule ExDb.SQL.AST do
             values: [Literal.t()]
           }
   end
+
+  defmodule CreateTableStatement do
+    @moduledoc """
+    Represents a CREATE TABLE statement.
+    """
+    defstruct [:table, :columns]
+
+    @type t :: %__MODULE__{
+            table: Table.t(),
+            columns: [Column.t()] | nil
+          }
+  end
 end

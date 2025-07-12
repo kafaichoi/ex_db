@@ -5,7 +5,7 @@ defmodule ExDb.SQL.Tokenizer do
 
   alias ExDb.SQL.Token
 
-  @keywords ~w(SELECT FROM WHERE AND OR INSERT INTO VALUES)
+  @keywords ~w(SELECT FROM WHERE AND OR INSERT INTO VALUES CREATE TABLE)
 
   @doc """
   Tokenizes a SQL string into a list of tokens.
@@ -30,8 +30,8 @@ defmodule ExDb.SQL.Tokenizer do
   # Main tokenization loop
   defp do_tokenize("", acc), do: {:ok, Enum.reverse(acc)}
 
-  # Skip whitespace
-  defp do_tokenize(<<char, rest::binary>>, acc) when char in [?\s, ?\t, ?\n, ?\r] do
+  # Skip whitespace and semicolons (statement terminators)
+  defp do_tokenize(<<char, rest::binary>>, acc) when char in [?\s, ?\t, ?\n, ?\r, ?\;] do
     do_tokenize(rest, acc)
   end
 

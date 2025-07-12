@@ -61,6 +61,14 @@ defmodule ExDb.SQL.Token do
     %__MODULE__{type: :keyword, value: "VALUES"}
   end
 
+  def create() do
+    %__MODULE__{type: :keyword, value: "CREATE"}
+  end
+
+  def table() do
+    %__MODULE__{type: :keyword, value: "TABLE"}
+  end
+
   def left_paren() do
     %__MODULE__{type: :punctuation, value: "("}
   end

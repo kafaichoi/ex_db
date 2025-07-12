@@ -6,7 +6,16 @@ defmodule ExDb.SQL.Parser do
   defstruct [:tokens, :current]
 
   alias ExDb.SQL.{Tokenizer, Token}
-  alias ExDb.SQL.AST.{SelectStatement, InsertStatement, Table, Literal, Column, BinaryOp}
+
+  alias ExDb.SQL.AST.{
+    SelectStatement,
+    InsertStatement,
+    CreateTableStatement,
+    Table,
+    Literal,
+    Column,
+    BinaryOp
+  }
 
   @doc """
   Parses a SQL string into an AST.
@@ -48,6 +57,9 @@ defmodule ExDb.SQL.Parser do
 
       %Token{type: :keyword, value: "INSERT"} ->
         parse_insert_statement(parser)
+
+      %Token{type: :keyword, value: "CREATE"} ->
+        parse_create_table_statement(parser)
 
       token ->
         {:error, "Unexpected token: #{inspect(token)}"}
@@ -108,6 +120,25 @@ defmodule ExDb.SQL.Parser do
 
         _token ->
           {:error, "Unexpected tokens after INSERT statement"}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp parse_create_table_statement(parser) do
+    with {:ok, parser} <- consume(parser, Token.create()),
+         {:ok, parser} <- consume(parser, Token.table()),
+         {:ok, {table, parser}} <- parse_table_name(parser) do
+      # For now, we'll support simple CREATE TABLE without column definitions
+      # Validate that all tokens are consumed
+      case peek(parser) do
+        %Token{type: :eof} ->
+          {:ok, %CreateTableStatement{table: table, columns: nil}}
+
+        _token ->
+          {:error, "Unexpected tokens after table name"}
       end
     else
       {:error, reason} ->

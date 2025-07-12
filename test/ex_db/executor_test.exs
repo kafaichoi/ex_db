@@ -135,4 +135,76 @@ defmodule ExDb.ExecutorTest do
       assert {:ok, _result, _adapter} = Executor.execute(select_ast, adapter)
     end
   end
+
+  describe "CREATE TABLE execution" do
+    test "CREATE TABLE creates new table successfully", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Parse and execute CREATE TABLE
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users")
+      {:ok, {InMemory, new_storage_state}} = Executor.execute(create_ast, adapter)
+
+      # Verify table was created
+      assert InMemory.table_exists?(new_storage_state, "users") == true
+    end
+
+    test "CREATE TABLE allows INSERT and SELECT after creation", %{
+      storage_state: storage_state
+    } do
+      adapter = {InMemory, storage_state}
+
+      # Step 1: Create table using SQL
+      {:ok, create_ast} = Parser.parse("CREATE TABLE products")
+      {:ok, adapter} = Executor.execute(create_ast, adapter)
+
+      # Step 2: Insert data
+      {:ok, insert_ast} = Parser.parse("INSERT INTO products VALUES (1, 'Widget')")
+      {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+      # Step 3: Select data
+      {:ok, select_ast} = Parser.parse("SELECT * FROM products")
+      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+
+      # Step 4: Verify the complete flow worked
+      assert result == [[1, "Widget"]]
+    end
+
+    test "CREATE TABLE returns error for existing table", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create table manually first
+      {:ok, storage_state} = InMemory.create_table(storage_state, "users")
+      adapter = {InMemory, storage_state}
+
+      # Try to create the same table again
+      {:ok, create_ast} = Parser.parse("CREATE TABLE users")
+
+      assert {:error, {:table_already_exists, "users"}} = Executor.execute(create_ast, adapter)
+    end
+
+    test "CREATE TABLE with different table names", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      # Create multiple tables
+      {:ok, create1_ast} = Parser.parse("CREATE TABLE users")
+      {:ok, adapter} = Executor.execute(create1_ast, adapter)
+
+      {:ok, create2_ast} = Parser.parse("CREATE TABLE products")
+      {:ok, adapter} = Executor.execute(create2_ast, adapter)
+
+      # Verify both tables exist
+      {_module, storage_state} = adapter
+      assert InMemory.table_exists?(storage_state, "users") == true
+      assert InMemory.table_exists?(storage_state, "products") == true
+    end
+
+    test "CREATE TABLE returns consistent interface", %{storage_state: storage_state} do
+      adapter = {InMemory, storage_state}
+
+      {:ok, create_ast} = Parser.parse("CREATE TABLE test")
+
+      # CREATE TABLE should return {:ok, adapter} like INSERT
+      assert {:ok, {InMemory, _new_storage_state}} = Executor.execute(create_ast, adapter)
+    end
+  end
 end

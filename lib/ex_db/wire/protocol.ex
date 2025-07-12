@@ -5,6 +5,9 @@ defmodule ExDb.Wire.Protocol do
 
   alias ExDb.Wire.Messages
   alias ExDb.Wire.Parser
+  alias ExDb.SQL.Parser, as: SQLParser
+  alias ExDb.Executor
+  alias ExDb.Storage.InMemory
   require Logger
 
   @doc """
@@ -37,13 +40,13 @@ defmodule ExDb.Wire.Protocol do
 
   @doc """
   Handle a query from the client.
-  Returns {:ok, query} on success, {:error, reason} on failure.
+  Returns {:ok, storage_state} on success, {:error, reason} on failure.
   """
-  def handle_query(socket) do
+  def handle_query(socket, storage_state) do
     case read_normal_message(socket) do
       {:ok, %{type: ?Q, data: data}} ->
         Logger.info("Received query message (Q), processing...")
-        process_query(socket, data)
+        process_query(socket, data, storage_state)
 
       {:ok, %{type: ?X, data: _data}} ->
         # Terminate message: client wants to close connection
@@ -86,45 +89,135 @@ defmodule ExDb.Wire.Protocol do
   end
 
   @doc """
-  Send a response to a SELECT 1 query.
+  Process a SQL query using the parser and executor.
+  Returns {:ok, storage_state} on success.
   """
-  def process_query(socket, query) do
+  def process_query(socket, query, storage_state) do
     query_trimmed = String.trim(query)
-    require Logger
     Logger.info("Processing query: #{inspect(query_trimmed)}")
 
-    case query_trimmed do
-      "SELECT 1;" ->
-        Logger.info("Executing supported query: SELECT 1")
-        # Send RowDescription, DataRow, CommandComplete, ReadyForQuery
-        for msg <- [
-              Messages.row_description([
-                %{
-                  name: "?column?",
-                  table_oid: 0,
-                  column_attr: 0,
-                  # int4
-                  type_oid: 23,
-                  type_size: 4,
-                  type_modifier: -1,
-                  format_code: 0
-                }
-              ]),
-              Messages.data_row(["1"]),
-              Messages.command_complete("SELECT 1"),
-              Messages.ready_for_query()
-            ] do
-          :gen_tcp.send(socket, msg)
+    # Create storage adapter tuple
+    adapter = {InMemory, storage_state}
+
+    case SQLParser.parse(query_trimmed) do
+      {:ok, ast} ->
+        Logger.info("Successfully parsed SQL: #{inspect(ast)}")
+        execute_sql(socket, ast, adapter)
+
+      {:error, reason} ->
+        Logger.warning("Failed to parse SQL: #{inspect(reason)}")
+        # Convert parsing errors to more user-friendly messages
+        error_msg =
+          case reason do
+            "Unexpected token: " <> _ -> "query not supported: #{query_trimmed}"
+            _ -> "syntax error: #{inspect(reason)}"
+          end
+
+        send_error(socket, error_msg, "ERROR")
+        send_ready_for_query(socket)
+        {:ok, storage_state}
+    end
+  end
+
+  # Execute parsed SQL and format response
+  defp execute_sql(socket, ast, adapter) do
+    case Executor.execute(ast, adapter) do
+      {:ok, result, {_adapter_module, new_storage_state}} ->
+        # SELECT statement - format result rows
+        Logger.info("SELECT executed successfully, rows: #{inspect(result)}")
+        send_select_response(socket, result)
+        {:ok, new_storage_state}
+
+      {:ok, {_adapter_module, new_storage_state}} ->
+        # INSERT or CREATE TABLE statement - send appropriate response
+        case ast do
+          %{__struct__: ExDb.SQL.AST.InsertStatement} ->
+            Logger.info("INSERT executed successfully")
+            send_insert_response(socket)
+
+          %{__struct__: ExDb.SQL.AST.CreateTableStatement} ->
+            Logger.info("CREATE TABLE executed successfully")
+            send_create_table_response(socket)
+
+          _ ->
+            Logger.info("Statement executed successfully")
+            # fallback
+            send_insert_response(socket)
         end
 
-        :ok
+        {:ok, new_storage_state}
 
-      _ ->
-        # For now, send an error for unknown queries
-        Logger.warning("Unsupported query received: #{inspect(query_trimmed)}")
-        send_error(socket, "query not supported: #{query_trimmed}", "ERROR")
+      {:error, {:table_not_found, table_name}} ->
+        Logger.warning("Table not found: #{table_name}")
+        send_error(socket, "relation \"#{table_name}\" does not exist", "ERROR")
         send_ready_for_query(socket)
-        :ok
+        {:ok, elem(adapter, 1)}
+
+      {:error, {:table_already_exists, table_name}} ->
+        Logger.warning("Table already exists: #{table_name}")
+        send_error(socket, "relation \"#{table_name}\" already exists", "ERROR")
+        send_ready_for_query(socket)
+        {:ok, elem(adapter, 1)}
+
+      {:error, reason} ->
+        Logger.warning("SQL execution failed: #{inspect(reason)}")
+        send_error(socket, "execution error: #{inspect(reason)}", "ERROR")
+        send_ready_for_query(socket)
+        {:ok, elem(adapter, 1)}
+    end
+  end
+
+  # Send SELECT response with rows
+  defp send_select_response(socket, rows) do
+    # For now, use a simple column description for SELECT * queries
+    # In a real implementation, this would be determined by the table schema
+    col_count = if Enum.empty?(rows), do: 0, else: length(List.first(rows))
+
+    columns =
+      for i <- 1..col_count do
+        %{
+          # PostgreSQL uses ?column? for anonymous columns
+          name: "?column?",
+          table_oid: 0,
+          column_attr: i,
+          # int4 type (for SELECT 1)
+          type_oid: 23,
+          type_size: 4,
+          type_modifier: -1,
+          format_code: 0
+        }
+      end
+
+    # Send response sequence
+    messages = [
+      Messages.row_description(columns),
+      Enum.map(rows, fn row -> Messages.data_row(Enum.map(row, &to_string/1)) end),
+      Messages.command_complete("SELECT #{length(rows)}"),
+      Messages.ready_for_query()
+    ]
+
+    for msg <- List.flatten(messages) do
+      :gen_tcp.send(socket, msg)
+    end
+  end
+
+  # Send INSERT response
+  defp send_insert_response(socket) do
+    for msg <- [
+          Messages.command_complete("INSERT 0 1"),
+          Messages.ready_for_query()
+        ] do
+      :gen_tcp.send(socket, msg)
+    end
+  end
+
+  # Send CREATE TABLE response
+  defp send_create_table_response(socket) do
+    for msg <- [
+          Messages.command_complete("CREATE TABLE"),
+          Messages.ready_for_query()
+        ] do
+      :gen_tcp.send(socket, msg)
     end
   end
 
