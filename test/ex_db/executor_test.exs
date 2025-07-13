@@ -15,8 +15,6 @@ defmodule ExDb.ExecutorTest do
 
   describe "end-to-end SQL execution" do
     test "INSERT followed by SELECT returns inserted data", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # First, we need to create the table (this will be implicit in the future)
       {:ok, storage_state} = InMemory.create_table(storage_state, "users")
       adapter = {InMemory, storage_state}
@@ -34,8 +32,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "multiple INSERTs followed by SELECT", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # Create table
       {:ok, storage_state} = InMemory.create_table(storage_state, "users")
       adapter = {InMemory, storage_state}
@@ -74,8 +70,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "SELECT from empty table returns empty result", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # Create empty table
       {:ok, storage_state} = InMemory.create_table(storage_state, "users")
       adapter = {InMemory, storage_state}
@@ -87,8 +81,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "mixed data types in INSERT and SELECT", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # Create table
       {:ok, storage_state} = InMemory.create_table(storage_state, "products")
       adapter = {InMemory, storage_state}
@@ -109,8 +101,6 @@ defmodule ExDb.ExecutorTest do
 
   describe "executor interface design" do
     test "executor returns consistent adapter state tuple", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       {:ok, storage_state} = InMemory.create_table(storage_state, "test")
       adapter = {InMemory, storage_state}
 
@@ -121,8 +111,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "executor handles different AST types", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       {:ok, storage_state} = InMemory.create_table(storage_state, "test")
       adapter = {InMemory, storage_state}
 
@@ -170,8 +158,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "CREATE TABLE returns error for existing table", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # Create table manually first
       {:ok, storage_state} = InMemory.create_table(storage_state, "users")
       adapter = {InMemory, storage_state}
@@ -313,8 +299,6 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "Legacy tables without schema skip validation", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
-
       # Create legacy table without schema
       {:ok, storage_state} = InMemory.create_table(storage_state, "legacy_table")
       adapter = {InMemory, storage_state}

@@ -2,7 +2,6 @@ defmodule ExDb.Server do
   use GenServer
 
   alias ExDb.Wire.Protocol
-  alias ExDb.Storage.InMemory
 
   require Logger
 
@@ -17,8 +16,8 @@ defmodule ExDb.Server do
     {:ok, listen_socket} =
       :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
 
-    # Initialize storage state
-    storage_state = InMemory.new()
+    # Initialize storage state (dummy state since SharedInMemory uses GenServer)
+    storage_state = :shared
 
     spawn_link(fn -> accept_loop(listen_socket, storage_state) end)
     {:ok, %{listen_socket: listen_socket, port: port, storage_state: storage_state}}

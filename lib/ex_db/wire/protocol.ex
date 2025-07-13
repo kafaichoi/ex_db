@@ -7,7 +7,7 @@ defmodule ExDb.Wire.Protocol do
   alias ExDb.Wire.Parser
   alias ExDb.SQL.Parser, as: SQLParser
   alias ExDb.Executor
-  alias ExDb.Storage.InMemory
+  alias ExDb.Storage.SharedInMemory
   require Logger
 
   @doc """
@@ -97,7 +97,7 @@ defmodule ExDb.Wire.Protocol do
     Logger.info("Processing query: #{inspect(query_trimmed)}")
 
     # Create storage adapter tuple
-    adapter = {InMemory, storage_state}
+    adapter = {SharedInMemory, storage_state}
 
     case SQLParser.parse(query_trimmed) do
       {:ok, ast} ->
