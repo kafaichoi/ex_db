@@ -9,14 +9,14 @@ defmodule ExDb.ExecutorTest do
   @moduletag :integration
 
   setup do
-    # Clean up any test heap files before each test
-    test_data_dir = Path.join(["data", "heap"])
+    # Clean up test data directories before each test
+    for dir <- ["data/heap", "data/pages"] do
+      if File.exists?(dir) do
+        File.rm_rf!(dir)
+      end
 
-    if File.exists?(test_data_dir) do
-      File.rm_rf!(test_data_dir)
+      File.mkdir_p!(dir)
     end
-
-    File.mkdir_p!(test_data_dir)
 
     # Create fresh storage state for each test
     storage_state = Heap.new("test_table")
@@ -26,7 +26,7 @@ defmodule ExDb.ExecutorTest do
   describe "end-to-end SQL execution" do
     test "INSERT followed by SELECT returns inserted data", %{storage_state: storage_state} do
       # First, we need to create the table (this will be implicit in the future)
-      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
       adapter = {Heap, storage_state}
 
       # Step 1: Parse and execute INSERT statement
@@ -43,7 +43,7 @@ defmodule ExDb.ExecutorTest do
 
     test "multiple INSERTs followed by SELECT", %{storage_state: storage_state} do
       # Create table
-      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
       adapter = {Heap, storage_state}
 
       # Insert multiple rows
@@ -81,7 +81,7 @@ defmodule ExDb.ExecutorTest do
 
     test "SELECT from empty table returns empty result", %{storage_state: storage_state} do
       # Create empty table
-      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
       adapter = {Heap, storage_state}
 
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
@@ -92,7 +92,7 @@ defmodule ExDb.ExecutorTest do
 
     test "mixed data types in INSERT and SELECT", %{storage_state: storage_state} do
       # Create table
-      {:ok, storage_state} = Heap.create_table(storage_state, "products")
+      {:ok, storage_state} = Heap.create_table(storage_state, "products", [])
       adapter = {Heap, storage_state}
 
       # Insert with mixed types (number, string, string)
@@ -111,7 +111,7 @@ defmodule ExDb.ExecutorTest do
 
   describe "executor interface design" do
     test "executor returns consistent adapter state tuple", %{storage_state: storage_state} do
-      {:ok, storage_state} = Heap.create_table(storage_state, "test")
+      {:ok, storage_state} = Heap.create_table(storage_state, "test", [])
       adapter = {Heap, storage_state}
 
       {:ok, insert_ast} = Parser.parse("INSERT INTO test VALUES (1)")
@@ -121,7 +121,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "executor handles different AST types", %{storage_state: storage_state} do
-      {:ok, storage_state} = Heap.create_table(storage_state, "test")
+      {:ok, storage_state} = Heap.create_table(storage_state, "test", [])
       adapter = {Heap, storage_state}
 
       # Should handle InsertStatement
@@ -169,7 +169,7 @@ defmodule ExDb.ExecutorTest do
 
     test "CREATE TABLE returns error for existing table", %{storage_state: storage_state} do
       # Create table manually first
-      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
       adapter = {Heap, storage_state}
 
       # Try to create the same table again
@@ -310,7 +310,7 @@ defmodule ExDb.ExecutorTest do
 
     test "Legacy tables without schema skip validation", %{storage_state: storage_state} do
       # Create legacy table without schema
-      {:ok, storage_state} = Heap.create_table(storage_state, "legacy_table")
+      {:ok, storage_state} = Heap.create_table(storage_state, "legacy_table", [])
       adapter = {Heap, storage_state}
 
       # Insert should work without validation

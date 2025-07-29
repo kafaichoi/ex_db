@@ -151,8 +151,8 @@ defmodule ExDb.Executor do
 
   # Validate INSERT values against table schema
   defp validate_insert_values(values, schema) do
-    # If no schema (legacy table), skip validation
-    if schema == nil do
+    # If no schema (legacy table) or empty schema, skip validation
+    if schema == nil or Enum.empty?(schema) do
       :ok
     else
       # Check column count

@@ -1,266 +1,331 @@
 defmodule ExDb.Storage.Heap do
   @moduledoc """
-  Heap storage adapter using file-based persistence.
+  PostgreSQL-inspired page-based heap storage adapter.
 
-  This adapter stores tables as heap files on disk, similar to PostgreSQL's heap storage.
-  For now, this is a simple append-only implementation that will be enhanced with
-  pages, shared buffers, and other optimizations later.
+  This is a complete rewrite of the heap storage using our new page-based architecture:
+  - Uses 8KB pages like PostgreSQL
+  - Implements page headers and line pointers
+  - Provides page-level I/O for better performance
+  - Maintains backward compatibility with the Storage.Adapter behavior
 
   File structure:
-  - data/heap/table_name.heap: Table data (rows)
-  - data/heap/table_name.meta: Table metadata (schema)
+  - data/pages/table_name.pages: 8KB pages containing table data
+  - Page 0: Header page with table metadata
+  - Page 1+: Data pages with actual row tuples
 
-  Row format in heap file:
-  [row_id][row_length][column1_data][column2_data]...
-
-  State structure:
-  %{
-    table_name: "table_name",
-    heap_file: "data/heap/table_name.heap",
-    meta_file: "data/heap/table_name.meta",
-    schema: [%ExDb.SQL.AST.ColumnDefinition{}, ...],
-    next_row_id: integer()
-  }
+  This replaces the old file-based heap storage with a proper page-based system.
   """
 
   @behaviour ExDb.Storage.Adapter
 
+  alias ExDb.Storage.{Page, PageManager}
   require Logger
 
+  defstruct [
+    :table_name,
+    :next_row_id,
+    :page_file,
+    :schema
+  ]
+
+  @type t :: %__MODULE__{
+          table_name: String.t(),
+          next_row_id: non_neg_integer(),
+          page_file: String.t(),
+          schema: [ExDb.SQL.AST.ColumnDefinition.t()] | nil
+        }
+
   @doc """
-  Creates initial state for a heap storage table.
+  Creates initial state for a page-based heap storage table.
   """
   def new(table_name) when is_binary(table_name) do
-    heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
+    page_file = Path.join(["data", "pages", "#{table_name}.pages"])
 
-    %{
+    %__MODULE__{
       table_name: table_name,
-      heap_file: heap_file,
-      meta_file: meta_file,
-      schema: nil,
-      next_row_id: 1
+      next_row_id: 1,
+      page_file: page_file,
+      schema: nil
     }
   end
 
   @impl ExDb.Storage.Adapter
   def create_table(state, table_name, columns) when is_binary(table_name) do
-    heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
+    case PageManager.get_page_count(table_name) do
+      {:ok, _count} ->
+        # Page file already exists
+        {:error, {:table_already_exists, table_name}}
 
-    # Ensure data/heap directory exists
-    Path.dirname(heap_file) |> File.mkdir_p!()
+      {:error, _} ->
+        case PageManager.create_page_file(table_name) do
+          {:ok, page_file} ->
+            # Store schema in header page metadata
+            # Handle empty or nil columns for backward compatibility
+            safe_columns = columns || []
 
-    # Check if table already exists
-    if File.exists?(heap_file) do
-      {:error, {:table_already_exists, table_name}}
-    else
-      # Create empty heap file
-      File.write!(heap_file, "")
+            case update_table_metadata(table_name, %{
+                   table_name: table_name,
+                   columns: safe_columns,
+                   created_at: DateTime.utc_now(),
+                   total_tuples: 0,
+                   page_format_version: 1
+                 }) do
+              :ok ->
+                new_state = %{
+                  state
+                  | table_name: table_name,
+                    page_file: page_file,
+                    schema: safe_columns,
+                    next_row_id: 1
+                }
 
-      # Store schema in meta file
-      meta_data = %{
-        table_name: table_name,
-        columns: columns,
-        created_at: DateTime.utc_now(),
-        row_count: 0
-      }
+                Logger.debug("Created paged heap table",
+                  table: table_name,
+                  page_file: page_file,
+                  columns: length(safe_columns)
+                )
 
-      File.write!(meta_file, :erlang.term_to_binary(meta_data))
+                {:ok, new_state}
 
-      new_state = %{
-        state
-        | table_name: table_name,
-          heap_file: heap_file,
-          meta_file: meta_file,
-          schema: columns,
-          next_row_id: 1
-      }
+              {:error, reason} ->
+                {:error, reason}
+            end
 
-      Logger.debug("Created heap table",
-        table: table_name,
-        heap_file: heap_file
-      )
-
-      {:ok, new_state}
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
   @impl ExDb.Storage.Adapter
   def table_exists?(_state, table_name) when is_binary(table_name) do
-    heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
-    File.exists?(heap_file)
+    case PageManager.get_page_count(table_name) do
+      {:ok, _count} -> true
+      {:error, _} -> false
+    end
   end
 
   @impl ExDb.Storage.Adapter
   def get_table_schema(state, table_name) when is_binary(table_name) do
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
-
-    case File.read(meta_file) do
-      {:ok, binary_data} ->
-        meta_data = :erlang.binary_to_term(binary_data)
-        {:ok, meta_data.columns, state}
-
-      {:error, :enoent} ->
-        {:error, {:table_not_found, table_name}}
+    case get_table_metadata(table_name) do
+      {:ok, metadata} ->
+        {:ok, metadata.columns, state}
 
       {:error, reason} ->
-        {:error, {:file_error, reason}}
+        {:error, reason}
     end
   end
 
   @impl ExDb.Storage.Adapter
   def insert_row(state, table_name, values) when is_binary(table_name) and is_list(values) do
-    heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
+    # Get next row ID from metadata
+    case get_table_metadata(table_name) do
+      {:ok, metadata} ->
+        row_id = metadata.total_tuples + 1
 
-    if not File.exists?(heap_file) do
-      {:error, {:table_not_found, table_name}}
-    else
-      # Load current row count to get next row ID
-      {:ok, current_row_id} = get_next_row_id(table_name)
+        # Serialize the tuple to calculate size
+        tuple_data = :erlang.term_to_binary({row_id, values})
+        tuple_size = byte_size(tuple_data)
 
-      # Serialize row: [row_id, values]
-      row_data = {current_row_id, values}
-      binary_row = :erlang.term_to_binary(row_data)
-      row_length = byte_size(binary_row)
+        # Find a page with enough space or create a new one
+        case find_or_create_page_with_space(table_name, tuple_size) do
+          {:ok, page_number, page} ->
+            # Add tuple to the page
+            case Page.add_tuple(page, row_id, values) do
+              {:ok, updated_page} ->
+                # Write the updated page back to file
+                case PageManager.write_page(table_name, page_number, updated_page) do
+                  :ok ->
+                    # Update table metadata
+                    update_table_metadata(table_name, %{metadata | total_tuples: row_id})
 
-      # Append to heap file: [length][binary_row]
-      file_entry = <<row_length::32, binary_row::binary>>
+                    Logger.debug("Inserted row into paged heap",
+                      table: table_name,
+                      row_id: row_id,
+                      page: page_number,
+                      values: values
+                    )
 
-      case File.open(heap_file, [:append, :binary]) do
-        {:ok, file} ->
-          result = IO.binwrite(file, file_entry)
-          File.close(file)
+                    {:ok, state}
 
-          case result do
-            :ok ->
-              # Update row count in meta file
-              update_row_count(table_name)
+                  {:error, reason} ->
+                    {:error, {:page_write_error, reason}}
+                end
 
-              Logger.debug("Inserted row into heap",
-                table: table_name,
-                row_id: current_row_id,
-                values: values
-              )
+              {:error, :no_space} ->
+                # This shouldn't happen since we checked space, but handle gracefully
+                {:error, {:unexpected_no_space, page_number}}
+            end
 
-              {:ok, state}
+          {:error, reason} ->
+            {:error, reason}
+        end
 
-            {:error, reason} ->
-              {:error, {:write_error, reason}}
-          end
-
-        {:error, reason} ->
-          {:error, {:file_error, reason}}
-      end
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @impl ExDb.Storage.Adapter
   def select_all_rows(state, table_name) when is_binary(table_name) do
-    heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
+    case PageManager.get_page_count(table_name) do
+      {:ok, page_count} when page_count > 1 ->
+        # Collect tuples from all data pages (skip page 0 which is header)
+        rows =
+          1..(page_count - 1)
+          |> Enum.flat_map(fn page_num ->
+            case PageManager.read_page(table_name, page_num) do
+              {:ok, page} ->
+                Page.get_all_tuples(page)
+                # Return just values
+                |> Enum.map(fn {_row_id, values} -> values end)
 
-    case File.read(heap_file) do
-      {:ok, binary_data} ->
-        rows = parse_heap_file(binary_data)
+              {:error, _reason} ->
+                Logger.warning("Failed to read page during select",
+                  table: table_name,
+                  page: page_num
+                )
 
-        Logger.debug("Selected rows from heap",
+                []
+            end
+          end)
+
+        Logger.debug("Selected rows from paged heap",
           table: table_name,
-          row_count: length(rows)
+          row_count: length(rows),
+          pages_scanned: page_count - 1
         )
 
         {:ok, rows, state}
 
-      {:error, :enoent} ->
-        {:error, {:table_not_found, table_name}}
+      {:ok, 1} ->
+        # Only header page, no data
+        {:ok, [], state}
 
       {:error, reason} ->
-        {:error, {:file_error, reason}}
+        {:error, reason}
     end
   end
 
   @impl ExDb.Storage.Adapter
   def table_info(state, table_name) when is_binary(table_name) do
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
+    case get_table_metadata(table_name) do
+      {:ok, metadata} ->
+        case PageManager.get_file_stats(table_name) do
+          {:ok, file_stats} ->
+            info = %{
+              name: table_name,
+              type: :table,
+              row_count: metadata.total_tuples,
+              storage: :heap_paged,
+              schema: metadata.columns,
+              file_size: file_stats.file_size,
+              page_count: file_stats.page_count,
+              data_pages: file_stats.data_pages,
+              created_at: metadata.created_at,
+              page_format_version: metadata.page_format_version
+            }
 
-    case File.read(meta_file) do
-      {:ok, binary_data} ->
-        meta_data = :erlang.binary_to_term(binary_data)
+            {:ok, info, state}
 
-        # Get current file size for storage info
-        heap_file = Path.join(["data", "heap", "#{table_name}.heap"])
-
-        file_size =
-          case File.stat(heap_file) do
-            {:ok, %{size: size}} -> size
-            _ -> 0
-          end
-
-        info = %{
-          name: table_name,
-          type: :table,
-          row_count: meta_data.row_count,
-          storage: :heap,
-          schema: meta_data.columns,
-          file_size: file_size,
-          created_at: meta_data.created_at
-        }
-
-        {:ok, info, state}
-
-      {:error, :enoent} ->
-        {:error, {:table_not_found, table_name}}
+          {:error, reason} ->
+            {:error, {:file_stats_error, reason}}
+        end
 
       {:error, reason} ->
-        {:error, {:file_error, reason}}
+        {:error, reason}
     end
   end
 
   # Private helper functions
 
-  defp get_next_row_id(table_name) do
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
+  defp get_table_metadata(table_name) do
+    case PageManager.read_page(table_name, 0) do
+      {:ok, header_page} ->
+        # Extract metadata from header page (stored as first tuple)
+        tuples = Page.get_all_tuples(header_page)
 
-    case File.read(meta_file) do
-      {:ok, binary_data} ->
-        meta_data = :erlang.binary_to_term(binary_data)
-        {:ok, meta_data.row_count + 1}
+        case tuples do
+          [{0, [metadata]} | _] ->
+            {:ok, metadata}
 
-      {:error, _} ->
-        {:ok, 1}
-    end
-  end
+          [] ->
+            {:error, {:no_metadata_found, table_name}}
 
-  defp update_row_count(table_name) do
-    meta_file = Path.join(["data", "heap", "#{table_name}.meta"])
+          other ->
+            Logger.warning("Unexpected header page structure",
+              table: table_name,
+              tuples: other
+            )
 
-    case File.read(meta_file) do
-      {:ok, binary_data} ->
-        meta_data = :erlang.binary_to_term(binary_data)
-        updated_meta = %{meta_data | row_count: meta_data.row_count + 1}
-        File.write!(meta_file, :erlang.term_to_binary(updated_meta))
+            {:error, {:invalid_header_page, table_name}}
+        end
 
       {:error, reason} ->
-        Logger.warning("Failed to update row count",
-          table: table_name,
-          error: inspect(reason)
-        )
+        {:error, {:header_page_error, reason}}
     end
   end
 
-  defp parse_heap_file(<<>>), do: []
+  defp update_table_metadata(table_name, metadata) do
+    case PageManager.read_page(table_name, 0) do
+      {:ok, _header_page} ->
+        # Remove existing metadata tuple and add updated one
+        # For simplicity, we'll recreate the header page with new metadata
+        new_header = Page.new(0)
 
-  defp parse_heap_file(<<row_length::32, binary_row::binary-size(row_length), rest::binary>>) do
-    {_row_id, values} = :erlang.binary_to_term(binary_row)
-    [values | parse_heap_file(rest)]
+        case Page.add_tuple(new_header, 0, [metadata]) do
+          {:ok, updated_header} ->
+            PageManager.write_page(table_name, 0, updated_header)
+
+          {:error, reason} ->
+            {:error, {:metadata_update_error, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:header_read_error, reason}}
+    end
   end
 
-  defp parse_heap_file(_invalid_data) do
-    Logger.error("Invalid heap file format detected")
-    []
+  defp find_or_create_page_with_space(table_name, tuple_size) do
+    case PageManager.find_page_with_space(table_name, tuple_size) do
+      {:ok, page_number, page} ->
+        {:ok, page_number, page}
+
+      {:error, :no_data_pages} ->
+        # No data pages exist yet, create first data page
+        create_new_data_page(table_name)
+
+      {:error, :no_space} ->
+        # All existing pages are full, create a new one
+        create_new_data_page(table_name)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  # Legacy create_table function for backward compatibility
-  def create_table(state, table_name) when is_binary(table_name) do
-    create_table(state, table_name, nil)
+  defp create_new_data_page(table_name) do
+    case PageManager.get_page_count(table_name) do
+      {:ok, page_count} ->
+        # Create new page with page_id = page_count (next available page number)
+        new_page = Page.new(page_count)
+
+        case PageManager.append_page(table_name, new_page) do
+          {:ok, page_number} ->
+            Logger.debug("Created new data page",
+              table: table_name,
+              page_number: page_number,
+              total_pages: page_count + 1
+            )
+
+            {:ok, page_number, new_page}
+
+          {:error, reason} ->
+            {:error, {:page_creation_error, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:page_count_error, reason}}
+    end
   end
 end

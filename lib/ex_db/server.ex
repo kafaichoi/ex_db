@@ -20,7 +20,7 @@ defmodule ExDb.Server do
     {:ok, listen_socket} =
       :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
 
-    # Initialize storage state for heap storage (file-based)
+    # Initialize storage state for page-based heap storage
     storage_state = ExDb.Storage.Heap.new("dummy_table")
 
     spawn_link(fn -> accept_loop(listen_socket, storage_state) end)
