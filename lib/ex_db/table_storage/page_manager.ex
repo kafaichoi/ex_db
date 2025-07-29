@@ -1,4 +1,4 @@
-defmodule ExDb.Storage.PageManager do
+defmodule ExDb.TableStorage.PageManager do
   @moduledoc """
   Manages reading and writing of 8KB pages to files.
 
@@ -12,7 +12,7 @@ defmodule ExDb.Storage.PageManager do
   - Subsequent pages contain actual table data
   """
 
-  alias ExDb.Storage.Page
+  alias ExDb.TableStorage.Page
   require Logger
 
   # Must match Page module

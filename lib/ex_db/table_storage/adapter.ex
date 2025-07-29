@@ -1,4 +1,4 @@
-defmodule ExDb.Storage.Adapter do
+defmodule ExDb.TableStorage.Adapter do
   @moduledoc """
   Behavior for storage adapters that can store and retrieve table data.
 

@@ -1,7 +1,7 @@
-defmodule ExDb.Storage.PageManagerTest do
+defmodule ExDb.TableStorage.PageManagerTest do
   # File I/O tests need async: false
   use ExUnit.Case, async: false
-  alias ExDb.Storage.{Page, PageManager}
+  alias ExDb.TableStorage.{Page, PageManager}
 
   setup do
     # Clean up test data directory before each test

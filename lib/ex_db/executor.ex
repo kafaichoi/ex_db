@@ -133,7 +133,7 @@ defmodule ExDb.Executor do
   end
 
   defp execute_select(
-         %SelectStatement{from: table, columns: columns},
+         %SelectStatement{from: table, columns: columns, where: where},
          {adapter_module, adapter_state}
        ) do
     case table do
@@ -150,11 +150,14 @@ defmodule ExDb.Executor do
           true ->
             case adapter_module.select_all_rows(adapter_state, table_name) do
               {:ok, rows, new_adapter_state} ->
+                # Apply WHERE clause filtering
+                filtered_rows = apply_where_filter(rows, where)
+
                 # Get column information based on the query
                 column_info =
                   build_select_column_info(columns, table_name, adapter_module, adapter_state)
 
-                {:ok, rows, column_info, {adapter_module, new_adapter_state}}
+                {:ok, filtered_rows, column_info, {adapter_module, new_adapter_state}}
 
               {:error, reason} ->
                 {:error, reason}
@@ -259,13 +262,28 @@ defmodule ExDb.Executor do
   end
 
   # WHERE clause evaluation functions
-  defp evaluate_where_condition(row, nil), do: true
+  defp apply_where_filter(rows, nil), do: rows
+
+  defp apply_where_filter(rows, where_condition) do
+    Enum.filter(rows, fn row ->
+      evaluate_where_condition(row, where_condition)
+    end)
+  end
+
+  defp evaluate_where_condition(_row, nil), do: true
 
   defp evaluate_where_condition(row, %{left: left, operator: operator, right: right}) do
     left_value = evaluate_expression(row, left)
     right_value = evaluate_expression(row, right)
 
+    # Handle both string and atom operators (same as in storage layer)
     case operator do
+      "=" -> left_value == right_value
+      "!=" -> left_value != right_value
+      "<" -> left_value < right_value
+      ">" -> left_value > right_value
+      "<=" -> left_value <= right_value
+      ">=" -> left_value >= right_value
       :eq -> left_value == right_value
       :ne -> left_value != right_value
       :lt -> left_value < right_value

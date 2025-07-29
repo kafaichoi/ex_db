@@ -10,7 +10,7 @@ defmodule StorageBenchmark do
     mix run benchmark/storage_benchmark.exs
   """
 
-  alias ExDb.{SQL.Parser, Executor, Storage.Heap}
+  alias ExDb.{SQL.Parser, Executor, TableStorage.Heap}
   require Logger
 
   @doc """

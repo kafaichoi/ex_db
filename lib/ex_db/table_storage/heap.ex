@@ -1,4 +1,4 @@
-defmodule ExDb.Storage.Heap do
+defmodule ExDb.TableStorage.Heap do
   @moduledoc """
   PostgreSQL-inspired page-based heap storage adapter.
 
@@ -16,9 +16,9 @@ defmodule ExDb.Storage.Heap do
   This replaces the old file-based heap storage with a proper page-based system.
   """
 
-  @behaviour ExDb.Storage.Adapter
+  @behaviour ExDb.TableStorage.Adapter
 
-  alias ExDb.Storage.{Page, PageManager}
+  alias ExDb.TableStorage.{Page, PageManager}
   require Logger
 
   defstruct [
@@ -49,7 +49,7 @@ defmodule ExDb.Storage.Heap do
     }
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def create_table(state, table_name, columns) when is_binary(table_name) do
     case PageManager.get_page_count(table_name) do
       {:ok, _count} ->
@@ -97,7 +97,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def table_exists?(_state, table_name) when is_binary(table_name) do
     case PageManager.get_page_count(table_name) do
       {:ok, _count} -> true
@@ -105,7 +105,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def get_table_schema(state, table_name) when is_binary(table_name) do
     case get_table_metadata(table_name) do
       {:ok, metadata} ->
@@ -116,7 +116,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def insert_row(state, table_name, values) when is_binary(table_name) and is_list(values) do
     # Get next row ID from metadata
     case get_table_metadata(table_name) do
@@ -166,7 +166,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def select_all_rows(state, table_name) when is_binary(table_name) do
     case PageManager.get_page_count(table_name) do
       {:ok, page_count} when page_count > 1 ->
@@ -207,7 +207,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def update_row(state, table_name, column_name, new_value, where_condition)
       when is_binary(table_name) and is_binary(column_name) do
     case PageManager.get_page_count(table_name) do
@@ -252,7 +252,7 @@ defmodule ExDb.Storage.Heap do
     end
   end
 
-  @impl ExDb.Storage.Adapter
+  @impl ExDb.TableStorage.Adapter
   def table_info(state, table_name) when is_binary(table_name) do
     case get_table_metadata(table_name) do
       {:ok, metadata} ->

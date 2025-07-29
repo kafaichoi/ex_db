@@ -1,4 +1,4 @@
-defmodule ExDb.Storage.Page do
+defmodule ExDb.TableStorage.Page do
   @moduledoc """
   PostgreSQL-inspired page structure with 8KB pages.
 

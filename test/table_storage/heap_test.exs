@@ -1,7 +1,7 @@
-defmodule ExDb.Storage.HeapTest do
+defmodule ExDb.TableStorage.HeapTest do
   # File I/O tests need async: false
   use ExUnit.Case, async: false
-  alias ExDb.Storage.Heap
+  alias ExDb.TableStorage.Heap
 
   setup do
     # Clean up test data directories before each test

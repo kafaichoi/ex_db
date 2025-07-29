@@ -9,7 +9,7 @@ defmodule ExDb.Wire.Protocol do
   alias ExDb.Wire.Transport
   alias ExDb.SQL.Parser, as: SQLParser
   alias ExDb.Executor
-  alias ExDb.Storage.Heap
+  alias ExDb.TableStorage.Heap
   alias ExDb.Errors
   require Logger
 

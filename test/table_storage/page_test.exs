@@ -1,6 +1,6 @@
-defmodule ExDb.Storage.PageTest do
+defmodule ExDb.TableStorage.PageTest do
   use ExUnit.Case, async: true
-  alias ExDb.Storage.Page
+  alias ExDb.TableStorage.Page
 
   describe "Page.new/1" do
     test "creates an empty page with correct initial state" do

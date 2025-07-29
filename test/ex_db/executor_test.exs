@@ -3,7 +3,7 @@ defmodule ExDb.ExecutorTest do
   use ExUnit.Case, async: false
 
   alias ExDb.SQL.Parser
-  alias ExDb.Storage.Heap
+  alias ExDb.TableStorage.Heap
   alias ExDb.Executor
 
   @moduletag :integration
