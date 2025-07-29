@@ -10,6 +10,46 @@ defmodule ExDb.Wire.Protocol do
   alias ExDb.Storage.SharedInMemory
   require Logger
 
+  # Wire protocol message types
+  @msg_query ?Q
+  @msg_terminate ?X
+
+  # Protocol structure constants
+  @min_message_length 5
+  @length_field_size 4
+
+  # Transaction status indicators
+  @txn_status_idle ?I
+
+  # Protocol version
+  @protocol_version 0x00030000
+
+  # PostgreSQL type metadata
+  @invalid_oid 0
+  @default_type_modifier -1
+  @format_text 0
+
+  # PostgreSQL type OIDs and sizes
+  @type_oids %{
+    # int4
+    integer: 23,
+    # text
+    text: 25,
+    # varchar
+    varchar: 1043,
+    # bool
+    boolean: 16
+  }
+
+  @type_sizes %{
+    integer: 4,
+    boolean: 1,
+    # Variable length
+    text: -1,
+    # Variable length
+    varchar: -1
+  }
+
   @doc """
   Handle the complete startup handshake with a client.
   Returns {:ok, params} on success, {:error, reason} on failure.
@@ -44,11 +84,11 @@ defmodule ExDb.Wire.Protocol do
   """
   def handle_query(socket, storage_state) do
     case read_normal_message(socket) do
-      {:ok, %{type: ?Q, data: data}} ->
+      {:ok, %{type: @msg_query, data: data}} ->
         Logger.info("Received query message (Q), processing...")
         process_query(socket, data, storage_state)
 
-      {:ok, %{type: ?X, data: _data}} ->
+      {:ok, %{type: @msg_terminate, data: _data}} ->
         # Terminate message: client wants to close connection
         Logger.info("Received terminate message (X), closing connection")
         {:error, :closed}
@@ -56,6 +96,11 @@ defmodule ExDb.Wire.Protocol do
       {:error, :closed} ->
         Logger.info("Socket closed while reading query")
         {:error, :closed}
+
+      {:error, :timeout} ->
+        # Timeout is normal during idle periods - don't treat as error
+        Logger.debug("Query read timeout - continuing to wait")
+        handle_query(socket, storage_state)
 
       {:error, reason} ->
         # Read error: just return error (no error message sent)
@@ -65,17 +110,26 @@ defmodule ExDb.Wire.Protocol do
   end
 
   defp read_normal_message(socket) do
-    case :gen_tcp.recv(socket, 5, 5000) do
+    # Configurable timeout for better interactive experience
+    case :gen_tcp.recv(
+           socket,
+           @min_message_length,
+           Application.get_env(:ex_db, :query_timeout, 30_000)
+         ) do
       {:ok, <<type, length::32>>} ->
-        if length < 5 do
+        if length < @min_message_length do
           {:ok, %{type: type, data: <<>>}}
         else
-          case :gen_tcp.recv(socket, length - 4, 5000) do
+          case :gen_tcp.recv(
+                 socket,
+                 length - @length_field_size,
+                 Application.get_env(:ex_db, :connection_timeout, 10_000)
+               ) do
             {:ok, data} ->
               {:ok, %{type: type, data: String.trim_trailing(data, <<0>>)}}
 
             {:error, reason} ->
-              Logger.warning("Failed to read query message: #{inspect(reason)}")
+              Logger.warning("Failed to read query message payload: #{inspect(reason)}")
               {:error, :malformed}
           end
         end
@@ -83,7 +137,12 @@ defmodule ExDb.Wire.Protocol do
       {:error, :closed} = err ->
         err
 
-      {:error, :timeout} ->
+      {:error, :timeout} = err ->
+        # Return timeout explicitly instead of treating as malformed
+        err
+
+      {:error, reason} ->
+        Logger.warning("Failed to read query message header: #{inspect(reason)}")
         {:error, :malformed}
     end
   end
@@ -122,10 +181,10 @@ defmodule ExDb.Wire.Protocol do
   # Execute parsed SQL and format response
   defp execute_sql(socket, ast, adapter) do
     case Executor.execute(ast, adapter) do
-      {:ok, result, {_adapter_module, new_storage_state}} ->
-        # SELECT statement - format result rows
+      {:ok, result, columns, {_adapter_module, new_storage_state}} ->
+        # SELECT statement - format result rows with column metadata
         Logger.info("SELECT executed successfully, rows: #{inspect(result)}")
-        send_select_response(socket, result)
+        send_select_response(socket, result, columns)
         {:ok, new_storage_state}
 
       {:ok, {_adapter_module, new_storage_state}} ->
@@ -167,26 +226,22 @@ defmodule ExDb.Wire.Protocol do
     end
   end
 
-  # Send SELECT response with rows
-  defp send_select_response(socket, rows) do
-    # For now, use a simple column description for SELECT * queries
-    # In a real implementation, this would be determined by the table schema
-    col_count = if Enum.empty?(rows), do: 0, else: length(List.first(rows))
-
+  # Send SELECT response with rows and column metadata
+  defp send_select_response(socket, rows, column_info) do
+    # Convert column info to wire protocol format
     columns =
-      for i <- 1..col_count do
+      Enum.with_index(column_info, 1)
+      |> Enum.map(fn {col_info, index} ->
         %{
-          # PostgreSQL uses ?column? for anonymous columns
-          name: "?column?",
-          table_oid: 0,
-          column_attr: i,
-          # int4 type (for SELECT 1)
-          type_oid: 23,
-          type_size: 4,
-          type_modifier: -1,
-          format_code: 0
+          name: col_info.name,
+          table_oid: @invalid_oid,
+          column_attr: index,
+          type_oid: type_to_oid(col_info.type),
+          type_size: type_to_size(col_info.type),
+          type_modifier: @default_type_modifier,
+          format_code: @format_text
         }
-      end
+      end)
 
     # Send response sequence
     messages = [
@@ -201,10 +256,16 @@ defmodule ExDb.Wire.Protocol do
     end
   end
 
+  # Convert column type to PostgreSQL type OID
+  defp type_to_oid(type), do: Map.get(@type_oids, type, @type_oids.text)
+
+  # Convert column type to PostgreSQL type size
+  defp type_to_size(type), do: Map.get(@type_sizes, type, @type_sizes.text)
+
   # Send INSERT response
   defp send_insert_response(socket) do
     for msg <- [
-          Messages.command_complete("INSERT 0 1"),
+          Messages.command_complete("INSERT #{@invalid_oid} 1"),
           Messages.ready_for_query()
         ] do
       :gen_tcp.send(socket, msg)
@@ -240,7 +301,7 @@ defmodule ExDb.Wire.Protocol do
   @doc """
   Send a ready for query message.
   """
-  def send_ready_for_query(socket, state \\ ?I) do
+  def send_ready_for_query(socket, state \\ @txn_status_idle) do
     ready_packet = Messages.ready_for_query(state)
     :gen_tcp.send(socket, ready_packet)
   end
@@ -257,6 +318,6 @@ defmodule ExDb.Wire.Protocol do
   Validate if the protocol version is supported.
   """
   def supported_protocol_version?(version) do
-    version == 0x00030000
+    version == @protocol_version
   end
 end

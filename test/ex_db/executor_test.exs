@@ -25,7 +25,7 @@ defmodule ExDb.ExecutorTest do
 
       # Step 2: Parse and execute SELECT statement
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       # Step 3: Verify the complete flow worked
       assert result == [[1, "John", "john@example.com"]]
@@ -45,7 +45,7 @@ defmodule ExDb.ExecutorTest do
 
       # Select all data
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       # Should return both rows, sorted by first column
       assert result == [[1, "John"], [2, "Jane"]]
@@ -75,7 +75,7 @@ defmodule ExDb.ExecutorTest do
       adapter = {InMemory, storage_state}
 
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       assert result == []
     end
@@ -93,7 +93,7 @@ defmodule ExDb.ExecutorTest do
 
       # Select and verify
       {:ok, select_ast} = Parser.parse("SELECT * FROM products")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       assert result == [[42, "Widget", "Electronics"]]
     end
@@ -120,7 +120,7 @@ defmodule ExDb.ExecutorTest do
 
       # Should handle SelectStatement
       {:ok, select_ast} = Parser.parse("SELECT * FROM test")
-      assert {:ok, _result, _adapter} = Executor.execute(select_ast, adapter)
+      assert {:ok, _result, _columns, _adapter} = Executor.execute(select_ast, adapter)
     end
   end
 
@@ -151,7 +151,7 @@ defmodule ExDb.ExecutorTest do
 
       # Step 3: Select data
       {:ok, select_ast} = Parser.parse("SELECT * FROM products")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       # Step 4: Verify the complete flow worked
       assert result == [[1, "Widget"]]
@@ -274,7 +274,7 @@ defmodule ExDb.ExecutorTest do
 
       # Verify data was inserted
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       assert result == [[1, "John", true]]
     end
@@ -293,7 +293,7 @@ defmodule ExDb.ExecutorTest do
 
       # Verify it was inserted
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       assert result == [[1, long_string]]
     end
@@ -309,7 +309,7 @@ defmodule ExDb.ExecutorTest do
 
       # Verify data was inserted
       {:ok, select_ast} = Parser.parse("SELECT * FROM legacy_table")
-      {:ok, result, _adapter} = Executor.execute(select_ast, adapter)
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
 
       assert result == [[1, "test", "extra"]]
     end

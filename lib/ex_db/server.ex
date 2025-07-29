@@ -11,6 +11,7 @@ defmodule ExDb.Server do
 
   @impl true
   def init(_) do
+    # Use Application.get_env directly - more idiomatic than wrapper function
     port = Application.get_env(:ex_db, :port, 5432)
 
     {:ok, listen_socket} =
@@ -68,14 +69,25 @@ defmodule ExDb.Server do
 
       {:error, :closed} ->
         Logger.info("Connection #{client_info} closed by client")
-        # Client closed connection
+        # Client closed connection gracefully
         :ok
 
       {:error, :malformed} ->
-        # Malformed query: close the connection
-        Logger.warning("Connection #{client_info} closed due to malformed query")
-        :gen_tcp.close(socket)
-        Logger.info("Connection #{client_info} terminated")
+        # Malformed query: log warning but keep connection open for now
+        # In a production system, we might want to close after multiple consecutive errors
+        Logger.warning("Connection #{client_info} received malformed query, continuing...")
+
+        # Send error response and continue
+        Protocol.send_error(socket, "malformed query", "ERROR")
+        Protocol.send_ready_for_query(socket)
+        handle_queries(socket, client_info, storage_state)
+
+      {:error, reason} ->
+        Logger.warning("Connection #{client_info} encountered error: #{inspect(reason)}")
+        # For other errors, send error response and continue
+        Protocol.send_error(socket, "connection error: #{inspect(reason)}", "ERROR")
+        Protocol.send_ready_for_query(socket)
+        handle_queries(socket, client_info, storage_state)
     end
   end
 end

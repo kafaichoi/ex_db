@@ -3,7 +3,15 @@ defmodule ExDb.Wire.Parser do
   Parser for Postgres wire protocol packets.
   """
 
-  @supported_protocol_version 0x00030000
+  # Protocol structure constants
+  @length_field_size 4
+  @min_startup_packet_size 8
+
+  # Wire protocol values
+  @null_terminator 0
+
+  # Compile-time constant for protocol version
+  @protocol_version 0x00030000
 
   @doc """
   Parse a startup packet from the client.
@@ -12,7 +20,7 @@ defmodule ExDb.Wire.Parser do
   def parse_startup_packet(data) do
     case data do
       <<protocol_version::32, rest::binary>> ->
-        if protocol_version == @supported_protocol_version do
+        if protocol_version == @protocol_version do
           parse_parameters(rest)
         else
           {:error, :invalid_protocol, protocol_version}
@@ -28,7 +36,7 @@ defmodule ExDb.Wire.Parser do
   """
   def parse_parameters(data) do
     # Split by null bytes and extract key-value pairs
-    case String.split(data, <<0>>) do
+    case String.split(data, <<@null_terminator>>) do
       parts when length(parts) >= 2 ->
         params =
           parts
@@ -49,22 +57,38 @@ defmodule ExDb.Wire.Parser do
   Returns {:ok, data} or {:error, reason}
   """
   def read_packet(socket) do
-    case :gen_tcp.recv(socket, 4) do
+    # Increased timeout for startup packet to handle slow clients
+    case :gen_tcp.recv(
+           socket,
+           @length_field_size,
+           Application.get_env(:ex_db, :connection_timeout, 10_000)
+         ) do
       {:ok, <<length::32>>} ->
-        if length < 8 do
+        if length < @min_startup_packet_size do
           # Minimum valid startup packet is 8 bytes (length + protocol)
           {:error, :invalid_length}
         else
-          data_length = length - 4
+          data_length = length - @length_field_size
 
-          case :gen_tcp.recv(socket, data_length) do
+          # Use same timeout for reading the packet data
+          case :gen_tcp.recv(
+                 socket,
+                 data_length,
+                 Application.get_env(:ex_db, :connection_timeout, 10_000)
+               ) do
             {:ok, data} ->
               {:ok, data}
+
+            {:error, :timeout} ->
+              {:error, :timeout}
 
             {:error, _reason} ->
               {:error, :invalid_length}
           end
         end
+
+      {:error, :timeout} ->
+        {:error, :timeout}
 
       {:error, _reason} ->
         {:error, :invalid_length}

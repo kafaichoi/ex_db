@@ -8,6 +8,9 @@ defmodule ExDb.Executor do
 
   alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement}
 
+  # SQL constants
+  @anonymous_column_name "?column?"
+
   @doc """
   Executes a SQL statement against the given storage adapter.
 
@@ -17,7 +20,7 @@ defmodule ExDb.Executor do
 
   ## Returns
   - For INSERT: `{:ok, adapter}` where adapter contains updated state
-  - For SELECT: `{:ok, result, adapter}` where result is a list of rows
+  - For SELECT: `{:ok, result, columns, adapter}` where result is a list of rows and columns is metadata
   - For CREATE TABLE: `{:ok, adapter}` where adapter contains updated state
   - For errors: `{:error, reason}`
   """
@@ -25,7 +28,9 @@ defmodule ExDb.Executor do
           InsertStatement.t() | SelectStatement.t() | CreateTableStatement.t(),
           {module(), any()}
         ) ::
-          {:ok, {module(), any()}} | {:ok, list(list()), {module(), any()}} | {:error, any()}
+          {:ok, {module(), any()}}
+          | {:ok, list(list()), list(map()), {module(), any()}}
+          | {:error, any()}
   def execute(ast, adapter)
 
   def execute(%InsertStatement{} = insert_stmt, adapter) do
@@ -98,7 +103,8 @@ defmodule ExDb.Executor do
         # SELECT without FROM clause (e.g., "SELECT 1")
         # Evaluate the literals directly
         row = evaluate_literals(columns)
-        {:ok, [row], {adapter_module, adapter_state}}
+        column_info = build_literal_column_info(columns)
+        {:ok, [row], column_info, {adapter_module, adapter_state}}
 
       %{name: table_name} ->
         # SELECT with FROM clause
@@ -106,7 +112,11 @@ defmodule ExDb.Executor do
           true ->
             case adapter_module.select_all_rows(adapter_state, table_name) do
               {:ok, rows, new_adapter_state} ->
-                {:ok, rows, {adapter_module, new_adapter_state}}
+                # Get column information based on the query
+                column_info =
+                  build_select_column_info(columns, table_name, adapter_module, adapter_state)
+
+                {:ok, rows, column_info, {adapter_module, new_adapter_state}}
 
               {:error, reason} ->
                 {:error, reason}
@@ -207,6 +217,67 @@ defmodule ExDb.Executor do
       %{name: "*"} -> "*"
       %{name: name} -> name
       other -> inspect(other)
+    end)
+  end
+
+  # Build column info for SELECT without FROM clause (literals)
+  defp build_literal_column_info(columns) do
+    Enum.map(columns, fn
+      %{type: :number} -> %{name: @anonymous_column_name, type: :integer}
+      %{type: :string} -> %{name: @anonymous_column_name, type: :text}
+      %{type: :boolean} -> %{name: @anonymous_column_name, type: :boolean}
+      %{name: name} -> %{name: name, type: :text}
+      _ -> %{name: @anonymous_column_name, type: :text}
+    end)
+  end
+
+  # Build column info for SELECT with FROM clause
+  defp build_select_column_info(columns, table_name, adapter_module, adapter_state) do
+    case adapter_module.get_table_schema(adapter_state, table_name) do
+      {:ok, schema, _adapter_state} when is_list(schema) ->
+        # Table has schema, use it to build column info
+        build_column_info_from_schema(columns, schema)
+
+      {:error, {:table_not_found, _}} ->
+        # Legacy table without schema, fall back to generic column info
+        build_generic_column_info(columns)
+
+      _ ->
+        # No schema available, use generic column info
+        build_generic_column_info(columns)
+    end
+  end
+
+  # Build column info using table schema
+  defp build_column_info_from_schema(columns, schema) do
+    Enum.map(columns, fn
+      %{name: "*"} ->
+        # SELECT * - return all columns from schema
+        Enum.map(schema, fn col_def ->
+          %{name: col_def.name, type: col_def.type}
+        end)
+
+      %{name: column_name} ->
+        # SELECT specific_column - find it in schema
+        case Enum.find(schema, fn col_def -> col_def.name == column_name end) do
+          # Column not found in schema
+          nil -> %{name: column_name, type: :text}
+          col_def -> %{name: col_def.name, type: col_def.type}
+        end
+
+      _ ->
+        # Literal in SELECT list
+        %{name: @anonymous_column_name, type: :text}
+    end)
+    |> List.flatten()
+  end
+
+  # Build generic column info when no schema is available
+  defp build_generic_column_info(columns) do
+    Enum.map(columns, fn
+      %{name: "*"} -> %{name: @anonymous_column_name, type: :text}
+      %{name: column_name} -> %{name: column_name, type: :text}
+      _ -> %{name: @anonymous_column_name, type: :text}
     end)
   end
 end

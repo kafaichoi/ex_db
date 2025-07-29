@@ -3,6 +3,9 @@ defmodule ExDb.Wire.Messages do
   Postgres wire protocol message builders and parsers.
   """
 
+  # Transaction status indicators
+  @txn_status_idle ?I
+
   # Message structs for parsing responses
   defmodule RowDescription do
     defstruct [:field_count, :fields]
@@ -140,7 +143,7 @@ defmodule ExDb.Wire.Messages do
     <<"K", 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 2>>
   end
 
-  def ready_for_query(state \\ ?I) do
+  def ready_for_query(state \\ @txn_status_idle) do
     <<"Z", 0, 0, 0, 5, state>>
   end
 

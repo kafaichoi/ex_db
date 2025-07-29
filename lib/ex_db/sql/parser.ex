@@ -18,6 +18,9 @@ defmodule ExDb.SQL.Parser do
     BinaryOp
   }
 
+  # SQL type constants
+  @default_varchar_size 255
+
   @doc """
   Parses a SQL string into an AST.
 
@@ -239,7 +242,7 @@ defmodule ExDb.SQL.Parser do
 
           _ ->
             # VARCHAR without size defaults to 255
-            {:ok, {:varchar, 255, parser}}
+            {:ok, {:varchar, @default_varchar_size, parser}}
         end
 
       {token, _parser} when token != nil ->
