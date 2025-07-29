@@ -147,24 +147,51 @@ defmodule ExDb.Wire.Messages do
     <<"Z", 0, 0, 0, 5, state>>
   end
 
-  def error_response(severity, code, message) do
-    error_data =
-      "S" <>
-        severity <>
-        <<0>> <>
-        "V" <>
-        severity <>
-        <<0>> <>
-        "C" <>
-        code <>
-        <<0>> <>
-        "M" <>
-        message <>
-        <<0>> <>
-        <<0>>
+  def error_response(
+        severity,
+        code,
+        message,
+        detail \\ nil,
+        hint \\ nil,
+        table_name \\ nil,
+        column_name \\ nil
+      ) do
+    # Build error fields in PostgreSQL wire protocol format
+    error_fields = [
+      # Severity (required)
+      "S" <> <<0>> <> severity <> <<0>>,
+      # Severity non-localized version
+      "V" <> <<0>> <> severity <> <<0>>,
+      # SQLSTATE Code (required)
+      "C" <> <<0>> <> code <> <<0>>,
+      # Message (required)
+      "M" <> <<0>> <> message <> <<0>>
+    ]
 
+    # Add optional fields if present
+    error_fields =
+      error_fields
+      # Detail
+      |> add_field_if_present("D", detail)
+      # Hint
+      |> add_field_if_present("H", hint)
+      # Table name
+      |> add_field_if_present("t", table_name)
+      # Column name
+      |> add_field_if_present("c", column_name)
+
+    # Join all fields and add null terminator
+    error_data = Enum.join(error_fields, "") <> <<0>>
     error_length = byte_size(error_data) + 4
+
     <<"E", error_length::32, error_data::binary>>
+  end
+
+  # Helper function to add optional error fields
+  defp add_field_if_present(fields, _field_type, nil), do: fields
+
+  defp add_field_if_present(fields, field_type, value) when is_binary(value) do
+    fields ++ [field_type <> <<0>> <> value <> <<0>>]
   end
 
   # New message builders for query responses

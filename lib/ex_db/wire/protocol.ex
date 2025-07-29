@@ -5,9 +5,12 @@ defmodule ExDb.Wire.Protocol do
 
   alias ExDb.Wire.Messages
   alias ExDb.Wire.Parser
+  alias ExDb.Wire.ErrorMessage
+  alias ExDb.Wire.Transport
   alias ExDb.SQL.Parser, as: SQLParser
   alias ExDb.Executor
   alias ExDb.Storage.SharedInMemory
+  alias ExDb.Errors
   require Logger
 
   # Wire protocol message types
@@ -63,8 +66,14 @@ defmodule ExDb.Wire.Protocol do
             {:ok, params}
 
           {:error, :invalid_protocol, protocol_version} ->
-            # Invalid protocol version: send error response
-            send_error(socket, "unsupported frontend protocol: #{inspect(protocol_version)}")
+            # Invalid protocol version: send standardized error response
+            exception =
+              Errors.ProtocolViolationError.exception(
+                "unsupported frontend protocol: #{inspect(protocol_version)}"
+              )
+
+            error_msg = ErrorMessage.from_exception(exception)
+            Transport.send_error_message(socket, error_msg)
             {:error, :invalid_protocol, protocol_version}
 
           {:error, _reason} ->
@@ -165,15 +174,10 @@ defmodule ExDb.Wire.Protocol do
 
       {:error, reason} ->
         Logger.warning("Failed to parse SQL: #{inspect(reason)}")
-        # Convert parsing errors to more user-friendly messages
-        error_msg =
-          case reason do
-            "Unexpected token: " <> _ -> "query not supported: #{query_trimmed}"
-            _ -> "syntax error: #{inspect(reason)}"
-          end
-
-        send_error(socket, error_msg, "ERROR")
-        send_ready_for_query(socket)
+        # Convert parsing errors to proper exceptions
+        exception = Errors.from_parser_error(reason, query_trimmed)
+        error_msg = ErrorMessage.from_exception(exception)
+        Transport.send_error_message(socket, error_msg)
         {:ok, storage_state}
     end
   end
@@ -184,7 +188,7 @@ defmodule ExDb.Wire.Protocol do
       {:ok, result, columns, {_adapter_module, new_storage_state}} ->
         # SELECT statement - format result rows with column metadata
         Logger.info("SELECT executed successfully, rows: #{inspect(result)}")
-        send_select_response(socket, result, columns)
+        Transport.send_select_response(socket, result, columns)
         {:ok, new_storage_state}
 
       {:ok, {_adapter_module, new_storage_state}} ->
@@ -192,36 +196,26 @@ defmodule ExDb.Wire.Protocol do
         case ast do
           %{__struct__: ExDb.SQL.AST.InsertStatement} ->
             Logger.info("INSERT executed successfully")
-            send_insert_response(socket)
+            Transport.send_insert_response(socket)
 
           %{__struct__: ExDb.SQL.AST.CreateTableStatement} ->
             Logger.info("CREATE TABLE executed successfully")
-            send_create_table_response(socket)
+            Transport.send_create_table_response(socket)
 
           _ ->
             Logger.info("Statement executed successfully")
             # fallback
-            send_insert_response(socket)
+            Transport.send_insert_response(socket)
         end
 
         {:ok, new_storage_state}
 
-      {:error, {:table_not_found, table_name}} ->
-        Logger.warning("Table not found: #{table_name}")
-        send_error(socket, "relation \"#{table_name}\" does not exist", "ERROR")
-        send_ready_for_query(socket)
-        {:ok, elem(adapter, 1)}
-
-      {:error, {:table_already_exists, table_name}} ->
-        Logger.warning("Table already exists: #{table_name}")
-        send_error(socket, "relation \"#{table_name}\" already exists", "ERROR")
-        send_ready_for_query(socket)
-        {:ok, elem(adapter, 1)}
-
       {:error, reason} ->
         Logger.warning("SQL execution failed: #{inspect(reason)}")
-        send_error(socket, "execution error: #{inspect(reason)}", "ERROR")
-        send_ready_for_query(socket)
+        # Convert executor errors to proper exceptions
+        exception = Errors.from_executor_error(reason)
+        error_msg = ErrorMessage.from_exception(exception)
+        Transport.send_error_message(socket, error_msg)
         {:ok, elem(adapter, 1)}
     end
   end
@@ -292,18 +286,26 @@ defmodule ExDb.Wire.Protocol do
 
   @doc """
   Send an error response to the client.
+
+  Deprecated: Use proper exceptions with ErrorMessage.from_exception/1 for new code.
+  This function is kept for backwards compatibility.
   """
-  def send_error(socket, message, severity \\ "FATAL", code \\ "0A000") do
-    error_packet = Messages.error_response(severity, code, message)
-    :gen_tcp.send(socket, error_packet)
+  def send_error(socket, message, severity \\ "FATAL", _code \\ "0A000") do
+    # Create a legacy internal error exception and convert to wire format
+    exception = Errors.InternalError.exception(message)
+    error_msg = ErrorMessage.from_exception(exception)
+    # Override severity for backwards compatibility
+    error_msg = %{error_msg | severity: severity, severity_v: severity}
+    Transport.send_error_message(socket, error_msg)
   end
 
   @doc """
   Send a ready for query message.
+
+  Deprecated: Use ExDb.Wire.Transport.send_ready_for_query/2 for new code.
   """
   def send_ready_for_query(socket, state \\ @txn_status_idle) do
-    ready_packet = Messages.ready_for_query(state)
-    :gen_tcp.send(socket, ready_packet)
+    Transport.send_ready_for_query(socket, state)
   end
 
   @doc """

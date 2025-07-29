@@ -91,8 +91,10 @@ defmodule ExDbTest do
     # Parse the error message and assert on its content
     error = ErrorMessage.parse(response2)
     assert error.severity == "FATAL"
-    assert error.code == "0A000"
-    assert error.message =~ "unsupported frontend protocol"
+    # PostgreSQL protocol violation code
+    assert error.code == "08P01"
+    assert error.message =~ "protocol violation"
+    assert error.detail =~ "unsupported frontend protocol"
     assert ErrorMessage.fatal?(error)
     assert ErrorMessage.error?(error)
 

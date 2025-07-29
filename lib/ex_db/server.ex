@@ -2,6 +2,9 @@ defmodule ExDb.Server do
   use GenServer
 
   alias ExDb.Wire.Protocol
+  alias ExDb.Wire.ErrorMessage
+  alias ExDb.Wire.Transport
+  alias ExDb.Errors
 
   require Logger
 
@@ -77,16 +80,18 @@ defmodule ExDb.Server do
         # In a production system, we might want to close after multiple consecutive errors
         Logger.warning("Connection #{client_info} received malformed query, continuing...")
 
-        # Send error response and continue
-        Protocol.send_error(socket, "malformed query", "ERROR")
-        Protocol.send_ready_for_query(socket)
+        # Send standardized error response and continue
+        exception = Errors.ProtocolViolationError.exception("malformed query packet")
+        error_msg = ErrorMessage.from_exception(exception)
+        Transport.send_error_message(socket, error_msg)
         handle_queries(socket, client_info, storage_state)
 
       {:error, reason} ->
         Logger.warning("Connection #{client_info} encountered error: #{inspect(reason)}")
-        # For other errors, send error response and continue
-        Protocol.send_error(socket, "connection error: #{inspect(reason)}", "ERROR")
-        Protocol.send_ready_for_query(socket)
+        # For other errors, send standardized error response and continue
+        exception = Errors.ConnectionFailureError.exception(inspect(reason))
+        error_msg = ErrorMessage.from_exception(exception)
+        Transport.send_error_message(socket, error_msg)
         handle_queries(socket, client_info, storage_state)
     end
   end
