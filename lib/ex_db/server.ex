@@ -35,64 +35,84 @@ defmodule ExDb.Server do
 
   defp handle_client(socket, storage_state) do
     {:ok, {address, port}} = :inet.peername(socket)
-    client_info = "#{:inet_parse.ntoa(address)}:#{port}"
-    Logger.info("New connection from #{client_info}")
+    remote_ip = :inet_parse.ntoa(address) |> to_string()
+
+    # Generate simple connection ID for correlation
+    connection_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
+
+    # Set Logger metadata for this process - idiomatic way to add context
+    Logger.metadata(
+      connection_id: connection_id,
+      remote_ip: remote_ip,
+      remote_port: port
+    )
+
+    Logger.info("Connection established",
+      remote_ip: remote_ip,
+      remote_port: port
+    )
 
     case Protocol.handle_startup(socket) do
       {:ok, params} ->
-        Logger.info(
-          "Connection #{client_info} authenticated successfully with params: #{inspect(params)}"
+        Logger.info("Authentication successful",
+          params: inspect(params),
+          protocol_version: params["protocol_version"] || "unknown"
         )
 
         # Keep connection open for queries
-        handle_queries(socket, client_info, storage_state)
+        handle_queries(socket, connection_id, storage_state)
 
       {:error, :invalid_protocol, protocol_version} ->
-        Logger.warning(
-          "Connection #{client_info} failed: invalid protocol version #{inspect(protocol_version)}"
+        Logger.warning("Authentication failed",
+          reason: "invalid_protocol",
+          protocol_version: inspect(protocol_version)
         )
 
         # Error response was already sent, just close the connection
         :gen_tcp.close(socket)
-        Logger.info("Connection #{client_info} terminated due to protocol error")
+        Logger.info("Connection closed", reason: "protocol_error")
 
       {:error, :malformed} ->
-        Logger.warning("Connection #{client_info} failed: malformed startup packet")
+        Logger.warning("Authentication failed", reason: "malformed_packet")
         # Malformed packet: just close the connection (no error message sent)
         :gen_tcp.close(socket)
-        Logger.info("Connection #{client_info} terminated due to malformed packet")
+        Logger.info("Connection closed", reason: "malformed_packet")
     end
   end
 
-  defp handle_queries(socket, client_info, storage_state) do
+  defp handle_queries(socket, connection_id, storage_state) do
     case Protocol.handle_query(socket, storage_state) do
       {:ok, new_storage_state} ->
         # Query handled successfully, continue listening for more queries
-        handle_queries(socket, client_info, new_storage_state)
+        handle_queries(socket, connection_id, new_storage_state)
 
       {:error, :closed} ->
-        Logger.info("Connection #{client_info} closed by client")
+        Logger.info("Connection closed", reason: "client_disconnect")
         # Client closed connection gracefully
         :ok
 
       {:error, :malformed} ->
         # Malformed query: log warning but keep connection open for now
         # In a production system, we might want to close after multiple consecutive errors
-        Logger.warning("Connection #{client_info} received malformed query, continuing...")
+        Logger.warning("Malformed query received", action: "continuing")
 
         # Send standardized error response and continue
         exception = Errors.ProtocolViolationError.exception("malformed query packet")
         error_msg = ErrorMessage.from_exception(exception)
         Transport.send_error_message(socket, error_msg)
-        handle_queries(socket, client_info, storage_state)
+        handle_queries(socket, connection_id, storage_state)
 
       {:error, reason} ->
-        Logger.warning("Connection #{client_info} encountered error: #{inspect(reason)}")
+        Logger.warning("Query processing error",
+          error: inspect(reason),
+          action: "continuing"
+        )
+
         # For other errors, send standardized error response and continue
         exception = Errors.ConnectionFailureError.exception(inspect(reason))
         error_msg = ErrorMessage.from_exception(exception)
         Transport.send_error_message(socket, error_msg)
-        handle_queries(socket, client_info, storage_state)
+        handle_queries(socket, connection_id, storage_state)
     end
   end
 end

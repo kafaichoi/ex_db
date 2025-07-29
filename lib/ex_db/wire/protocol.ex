@@ -94,26 +94,25 @@ defmodule ExDb.Wire.Protocol do
   def handle_query(socket, storage_state) do
     case read_normal_message(socket) do
       {:ok, %{type: @msg_query, data: data}} ->
-        Logger.info("Received query message (Q), processing...")
+        # No need to log routine query messages - too verbose
         process_query(socket, data, storage_state)
 
       {:ok, %{type: @msg_terminate, data: _data}} ->
         # Terminate message: client wants to close connection
-        Logger.info("Received terminate message (X), closing connection")
+        Logger.debug("Terminate message received")
         {:error, :closed}
 
       {:error, :closed} ->
-        Logger.info("Socket closed while reading query")
+        Logger.debug("Socket closed during read")
         {:error, :closed}
 
       {:error, :timeout} ->
-        # Timeout is normal during idle periods - don't treat as error
-        Logger.debug("Query read timeout - continuing to wait")
+        # Timeout is normal during idle periods - don't log at all
         handle_query(socket, storage_state)
 
       {:error, reason} ->
         # Read error: just return error (no error message sent)
-        Logger.warning("Failed to read query message: #{inspect(reason)}")
+        Logger.warning("Query read failed", error: inspect(reason))
         {:error, :malformed}
     end
   end
@@ -138,7 +137,7 @@ defmodule ExDb.Wire.Protocol do
               {:ok, %{type: type, data: String.trim_trailing(data, <<0>>)}}
 
             {:error, reason} ->
-              Logger.warning("Failed to read query message payload: #{inspect(reason)}")
+              Logger.warning("Query payload read failed", error: inspect(reason))
               {:error, :malformed}
           end
         end
@@ -151,7 +150,7 @@ defmodule ExDb.Wire.Protocol do
         err
 
       {:error, reason} ->
-        Logger.warning("Failed to read query message header: #{inspect(reason)}")
+        Logger.warning("Query header read failed", error: inspect(reason))
         {:error, :malformed}
     end
   end
@@ -162,18 +161,29 @@ defmodule ExDb.Wire.Protocol do
   """
   def process_query(socket, query, storage_state) do
     query_trimmed = String.trim(query)
-    Logger.info("Processing query: #{inspect(query_trimmed)}")
+
+    # Add query to Logger metadata for this process
+    Logger.metadata(query: String.slice(query_trimmed, 0, 100))
+
+    Logger.info("Query received",
+      query_type: extract_query_type(query_trimmed),
+      query_length: String.length(query_trimmed)
+    )
 
     # Create storage adapter tuple
     adapter = {SharedInMemory, storage_state}
 
     case SQLParser.parse(query_trimmed) do
       {:ok, ast} ->
-        Logger.info("Successfully parsed SQL: #{inspect(ast)}")
+        Logger.debug("SQL parsed successfully", ast_type: ast.__struct__)
         execute_sql(socket, ast, adapter)
 
       {:error, reason} ->
-        Logger.warning("Failed to parse SQL: #{inspect(reason)}")
+        Logger.warning("SQL parsing failed",
+          error: inspect(reason),
+          query: String.slice(query_trimmed, 0, 50)
+        )
+
         # Convert parsing errors to proper exceptions
         exception = Errors.from_parser_error(reason, query_trimmed)
         error_msg = ErrorMessage.from_exception(exception)
@@ -184,26 +194,37 @@ defmodule ExDb.Wire.Protocol do
 
   # Execute parsed SQL and format response
   defp execute_sql(socket, ast, adapter) do
+    operation = get_operation_type(ast)
+    table_name = get_table_name(ast)
+
     case Executor.execute(ast, adapter) do
       {:ok, result, columns, {_adapter_module, new_storage_state}} ->
         # SELECT statement - format result rows with column metadata
-        Logger.info("SELECT executed successfully, rows: #{inspect(result)}")
+        Logger.info("Query completed",
+          operation: operation,
+          table: table_name,
+          rows_returned: length(result)
+        )
+
         Transport.send_select_response(socket, result, columns)
         {:ok, new_storage_state}
 
       {:ok, {_adapter_module, new_storage_state}} ->
         # INSERT or CREATE TABLE statement - send appropriate response
+        Logger.info("Query completed",
+          operation: operation,
+          table: table_name,
+          rows_affected: 1
+        )
+
         case ast do
           %{__struct__: ExDb.SQL.AST.InsertStatement} ->
-            Logger.info("INSERT executed successfully")
             Transport.send_insert_response(socket)
 
           %{__struct__: ExDb.SQL.AST.CreateTableStatement} ->
-            Logger.info("CREATE TABLE executed successfully")
             Transport.send_create_table_response(socket)
 
           _ ->
-            Logger.info("Statement executed successfully")
             # fallback
             Transport.send_insert_response(socket)
         end
@@ -211,7 +232,12 @@ defmodule ExDb.Wire.Protocol do
         {:ok, new_storage_state}
 
       {:error, reason} ->
-        Logger.warning("SQL execution failed: #{inspect(reason)}")
+        Logger.warning("Query execution failed",
+          operation: operation,
+          table: table_name,
+          error: inspect(reason)
+        )
+
         # Convert executor errors to proper exceptions
         exception = Errors.from_executor_error(reason)
         error_msg = ErrorMessage.from_exception(exception)
@@ -219,6 +245,27 @@ defmodule ExDb.Wire.Protocol do
         {:ok, elem(adapter, 1)}
     end
   end
+
+  # Helper functions for structured logging
+  defp extract_query_type(query) do
+    query
+    |> String.trim()
+    |> String.upcase()
+    |> String.split(" ", parts: 2)
+    |> hd()
+  rescue
+    _ -> "UNKNOWN"
+  end
+
+  defp get_operation_type(%ExDb.SQL.AST.SelectStatement{}), do: "SELECT"
+  defp get_operation_type(%ExDb.SQL.AST.InsertStatement{}), do: "INSERT"
+  defp get_operation_type(%ExDb.SQL.AST.CreateTableStatement{}), do: "CREATE_TABLE"
+  defp get_operation_type(_), do: "UNKNOWN"
+
+  defp get_table_name(%ExDb.SQL.AST.SelectStatement{from: %{name: name}}), do: name
+  defp get_table_name(%ExDb.SQL.AST.InsertStatement{table: %{name: name}}), do: name
+  defp get_table_name(%ExDb.SQL.AST.CreateTableStatement{table: %{name: name}}), do: name
+  defp get_table_name(_), do: nil
 
   # Send SELECT response with rows and column metadata
   defp send_select_response(socket, rows, column_info) do
