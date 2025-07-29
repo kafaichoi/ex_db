@@ -9,7 +9,7 @@ defmodule ExDb.Wire.Protocol do
   alias ExDb.Wire.Transport
   alias ExDb.SQL.Parser, as: SQLParser
   alias ExDb.Executor
-  alias ExDb.Storage.SharedInMemory
+  alias ExDb.Storage.Heap
   alias ExDb.Errors
   require Logger
 
@@ -26,32 +26,6 @@ defmodule ExDb.Wire.Protocol do
 
   # Protocol version
   @protocol_version 0x00030000
-
-  # PostgreSQL type metadata
-  @invalid_oid 0
-  @default_type_modifier -1
-  @format_text 0
-
-  # PostgreSQL type OIDs and sizes
-  @type_oids %{
-    # int4
-    integer: 23,
-    # text
-    text: 25,
-    # varchar
-    varchar: 1043,
-    # bool
-    boolean: 16
-  }
-
-  @type_sizes %{
-    integer: 4,
-    boolean: 1,
-    # Variable length
-    text: -1,
-    # Variable length
-    varchar: -1
-  }
 
   @doc """
   Handle the complete startup handshake with a client.
@@ -171,7 +145,7 @@ defmodule ExDb.Wire.Protocol do
     )
 
     # Create storage adapter tuple
-    adapter = {SharedInMemory, storage_state}
+    adapter = {Heap, storage_state}
 
     case SQLParser.parse(query_trimmed) do
       {:ok, ast} ->
@@ -266,62 +240,6 @@ defmodule ExDb.Wire.Protocol do
   defp get_table_name(%ExDb.SQL.AST.InsertStatement{table: %{name: name}}), do: name
   defp get_table_name(%ExDb.SQL.AST.CreateTableStatement{table: %{name: name}}), do: name
   defp get_table_name(_), do: nil
-
-  # Send SELECT response with rows and column metadata
-  defp send_select_response(socket, rows, column_info) do
-    # Convert column info to wire protocol format
-    columns =
-      Enum.with_index(column_info, 1)
-      |> Enum.map(fn {col_info, index} ->
-        %{
-          name: col_info.name,
-          table_oid: @invalid_oid,
-          column_attr: index,
-          type_oid: type_to_oid(col_info.type),
-          type_size: type_to_size(col_info.type),
-          type_modifier: @default_type_modifier,
-          format_code: @format_text
-        }
-      end)
-
-    # Send response sequence
-    messages = [
-      Messages.row_description(columns),
-      Enum.map(rows, fn row -> Messages.data_row(Enum.map(row, &to_string/1)) end),
-      Messages.command_complete("SELECT #{length(rows)}"),
-      Messages.ready_for_query()
-    ]
-
-    for msg <- List.flatten(messages) do
-      :gen_tcp.send(socket, msg)
-    end
-  end
-
-  # Convert column type to PostgreSQL type OID
-  defp type_to_oid(type), do: Map.get(@type_oids, type, @type_oids.text)
-
-  # Convert column type to PostgreSQL type size
-  defp type_to_size(type), do: Map.get(@type_sizes, type, @type_sizes.text)
-
-  # Send INSERT response
-  defp send_insert_response(socket) do
-    for msg <- [
-          Messages.command_complete("INSERT #{@invalid_oid} 1"),
-          Messages.ready_for_query()
-        ] do
-      :gen_tcp.send(socket, msg)
-    end
-  end
-
-  # Send CREATE TABLE response
-  defp send_create_table_response(socket) do
-    for msg <- [
-          Messages.command_complete("CREATE TABLE"),
-          Messages.ready_for_query()
-        ] do
-      :gen_tcp.send(socket, msg)
-    end
-  end
 
   @doc """
   Send the complete handshake sequence to the client.
