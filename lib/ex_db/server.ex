@@ -20,8 +20,8 @@ defmodule ExDb.Server do
     {:ok, listen_socket} =
       :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
 
-    # Initialize storage state (dummy state since SharedInMemory uses GenServer)
-    storage_state = :shared
+    # Initialize storage state for heap storage (file-based)
+    storage_state = ExDb.Storage.Heap.new("dummy_table")
 
     spawn_link(fn -> accept_loop(listen_socket, storage_state) end)
     {:ok, %{listen_socket: listen_socket, port: port, storage_state: storage_state}}

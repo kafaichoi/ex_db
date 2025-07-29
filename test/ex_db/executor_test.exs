@@ -1,23 +1,33 @@
 defmodule ExDb.ExecutorTest do
-  use ExUnit.Case, async: true
+  # Not async due to file I/O
+  use ExUnit.Case, async: false
 
   alias ExDb.SQL.Parser
-  alias ExDb.Storage.InMemory
+  alias ExDb.Storage.Heap
   alias ExDb.Executor
 
   @moduletag :integration
 
   setup do
+    # Clean up any test heap files before each test
+    test_data_dir = Path.join(["data", "heap"])
+
+    if File.exists?(test_data_dir) do
+      File.rm_rf!(test_data_dir)
+    end
+
+    File.mkdir_p!(test_data_dir)
+
     # Create fresh storage state for each test
-    storage_state = InMemory.new()
+    storage_state = Heap.new("test_table")
     {:ok, storage_state: storage_state}
   end
 
   describe "end-to-end SQL execution" do
     test "INSERT followed by SELECT returns inserted data", %{storage_state: storage_state} do
       # First, we need to create the table (this will be implicit in the future)
-      {:ok, storage_state} = InMemory.create_table(storage_state, "users")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      adapter = {Heap, storage_state}
 
       # Step 1: Parse and execute INSERT statement
       {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, 'John', 'john@example.com')")
@@ -33,8 +43,8 @@ defmodule ExDb.ExecutorTest do
 
     test "multiple INSERTs followed by SELECT", %{storage_state: storage_state} do
       # Create table
-      {:ok, storage_state} = InMemory.create_table(storage_state, "users")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      adapter = {Heap, storage_state}
 
       # Insert multiple rows
       {:ok, insert1_ast} = Parser.parse("INSERT INTO users VALUES (1, 'John')")
@@ -52,7 +62,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "INSERT into non-existing table returns error", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       {:ok, insert_ast} = Parser.parse("INSERT INTO nonexistent VALUES (1, 'test')")
 
@@ -61,7 +71,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "SELECT from non-existing table returns error", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       {:ok, select_ast} = Parser.parse("SELECT * FROM nonexistent")
 
@@ -71,8 +81,8 @@ defmodule ExDb.ExecutorTest do
 
     test "SELECT from empty table returns empty result", %{storage_state: storage_state} do
       # Create empty table
-      {:ok, storage_state} = InMemory.create_table(storage_state, "users")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      adapter = {Heap, storage_state}
 
       {:ok, select_ast} = Parser.parse("SELECT * FROM users")
       {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
@@ -82,8 +92,8 @@ defmodule ExDb.ExecutorTest do
 
     test "mixed data types in INSERT and SELECT", %{storage_state: storage_state} do
       # Create table
-      {:ok, storage_state} = InMemory.create_table(storage_state, "products")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "products")
+      adapter = {Heap, storage_state}
 
       # Insert with mixed types (number, string, string)
       {:ok, insert_ast} =
@@ -101,18 +111,18 @@ defmodule ExDb.ExecutorTest do
 
   describe "executor interface design" do
     test "executor returns consistent adapter state tuple", %{storage_state: storage_state} do
-      {:ok, storage_state} = InMemory.create_table(storage_state, "test")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "test")
+      adapter = {Heap, storage_state}
 
       {:ok, insert_ast} = Parser.parse("INSERT INTO test VALUES (1)")
 
       # INSERT should return {:ok, adapter}
-      assert {:ok, {InMemory, _new_storage_state}} = Executor.execute(insert_ast, adapter)
+      assert {:ok, {Heap, _new_storage_state}} = Executor.execute(insert_ast, adapter)
     end
 
     test "executor handles different AST types", %{storage_state: storage_state} do
-      {:ok, storage_state} = InMemory.create_table(storage_state, "test")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "test")
+      adapter = {Heap, storage_state}
 
       # Should handle InsertStatement
       {:ok, insert_ast} = Parser.parse("INSERT INTO test VALUES (1)")
@@ -126,20 +136,20 @@ defmodule ExDb.ExecutorTest do
 
   describe "CREATE TABLE execution" do
     test "CREATE TABLE creates new table successfully", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Parse and execute CREATE TABLE
       {:ok, create_ast} = Parser.parse("CREATE TABLE users")
-      {:ok, {InMemory, new_storage_state}} = Executor.execute(create_ast, adapter)
+      {:ok, {Heap, new_storage_state}} = Executor.execute(create_ast, adapter)
 
       # Verify table was created
-      assert InMemory.table_exists?(new_storage_state, "users") == true
+      assert Heap.table_exists?(new_storage_state, "users") == true
     end
 
     test "CREATE TABLE allows INSERT and SELECT after creation", %{
       storage_state: storage_state
     } do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Step 1: Create table using SQL
       {:ok, create_ast} = Parser.parse("CREATE TABLE products")
@@ -159,8 +169,8 @@ defmodule ExDb.ExecutorTest do
 
     test "CREATE TABLE returns error for existing table", %{storage_state: storage_state} do
       # Create table manually first
-      {:ok, storage_state} = InMemory.create_table(storage_state, "users")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "users")
+      adapter = {Heap, storage_state}
 
       # Try to create the same table again
       {:ok, create_ast} = Parser.parse("CREATE TABLE users")
@@ -169,7 +179,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "CREATE TABLE with different table names", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create multiple tables
       {:ok, create1_ast} = Parser.parse("CREATE TABLE users")
@@ -180,21 +190,21 @@ defmodule ExDb.ExecutorTest do
 
       # Verify both tables exist
       {_module, storage_state} = adapter
-      assert InMemory.table_exists?(storage_state, "users") == true
-      assert InMemory.table_exists?(storage_state, "products") == true
+      assert Heap.table_exists?(storage_state, "users") == true
+      assert Heap.table_exists?(storage_state, "products") == true
     end
 
     test "CREATE TABLE returns consistent interface", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       {:ok, create_ast} = Parser.parse("CREATE TABLE test")
 
       # CREATE TABLE should return {:ok, adapter} like INSERT
-      assert {:ok, {InMemory, _new_storage_state}} = Executor.execute(create_ast, adapter)
+      assert {:ok, {Heap, _new_storage_state}} = Executor.execute(create_ast, adapter)
     end
 
     test "CREATE TABLE with column definitions", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       {:ok, create_ast} =
         Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR(255), email TEXT)")
@@ -203,10 +213,10 @@ defmodule ExDb.ExecutorTest do
 
       # Verify table was created with schema
       {_module, storage_state} = adapter
-      assert InMemory.table_exists?(storage_state, "users") == true
+      assert Heap.table_exists?(storage_state, "users") == true
 
       # Verify schema was stored
-      {:ok, schema, _storage_state} = InMemory.get_table_schema(storage_state, "users")
+      {:ok, schema, _storage_state} = Heap.get_table_schema(storage_state, "users")
       assert length(schema) == 3
       assert Enum.at(schema, 0).name == "id"
       assert Enum.at(schema, 0).type == :integer
@@ -220,7 +230,7 @@ defmodule ExDb.ExecutorTest do
 
   describe "Schema validation" do
     test "INSERT validates column count", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create table with schema
       {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name TEXT)")
@@ -233,7 +243,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "INSERT validates column types", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create table with schema
       {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name TEXT)")
@@ -247,7 +257,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "INSERT validates VARCHAR length", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create table with VARCHAR size constraint
       {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR(5))")
@@ -260,7 +270,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "INSERT succeeds with valid data", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create table with schema
       {:ok, create_ast} =
@@ -280,7 +290,7 @@ defmodule ExDb.ExecutorTest do
     end
 
     test "INSERT with VARCHAR without size constraint", %{storage_state: storage_state} do
-      adapter = {InMemory, storage_state}
+      adapter = {Heap, storage_state}
 
       # Create table with VARCHAR without size (defaults to 255)
       {:ok, create_ast} = Parser.parse("CREATE TABLE users (id INTEGER, name VARCHAR)")
@@ -300,8 +310,8 @@ defmodule ExDb.ExecutorTest do
 
     test "Legacy tables without schema skip validation", %{storage_state: storage_state} do
       # Create legacy table without schema
-      {:ok, storage_state} = InMemory.create_table(storage_state, "legacy_table")
-      adapter = {InMemory, storage_state}
+      {:ok, storage_state} = Heap.create_table(storage_state, "legacy_table")
+      adapter = {Heap, storage_state}
 
       # Insert should work without validation
       {:ok, insert_ast} = Parser.parse("INSERT INTO legacy_table VALUES (1, 'test', 'extra')")

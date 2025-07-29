@@ -23,3 +23,5 @@ erl_crash.dump
 ex_db-*.tar
 
 .iex.exs
+
+data/

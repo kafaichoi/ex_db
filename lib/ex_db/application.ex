@@ -10,7 +10,6 @@ defmodule ExDb.Application do
     children = [
       # Starts a worker by calling: ExDb.Worker.start_link(arg)
       # {ExDb.Worker, arg}
-      ExDb.Storage.InMemoryServer,
       ExDb.Server
     ]
 
