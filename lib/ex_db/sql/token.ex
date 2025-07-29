@@ -53,6 +53,10 @@ defmodule ExDb.SQL.Token do
     %__MODULE__{type: :keyword, value: "INSERT"}
   end
 
+  def update() do
+    %__MODULE__{type: :keyword, value: "UPDATE"}
+  end
+
   def into() do
     %__MODULE__{type: :keyword, value: "INTO"}
   end
@@ -83,6 +87,10 @@ defmodule ExDb.SQL.Token do
 
   def boolean() do
     %__MODULE__{type: :keyword, value: "BOOLEAN"}
+  end
+
+  def set() do
+    %__MODULE__{type: :keyword, value: "SET"}
   end
 
   def left_paren() do

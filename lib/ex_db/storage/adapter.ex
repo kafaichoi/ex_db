@@ -43,6 +43,21 @@ defmodule ExDb.Storage.Adapter do
               {:ok, term()} | {:error, term()}
 
   @doc """
+  Updates rows in the specified table that match the given condition.
+
+  For now, this is a simple implementation that updates all matching rows.
+  Returns {updated_count, new_adapter_state} on success.
+  """
+  @callback update_row(
+              adapter_state :: term(),
+              table_name :: String.t(),
+              column_name :: String.t(),
+              new_value :: term(),
+              where_condition :: ExDb.SQL.AST.BinaryOp.t() | nil
+            ) ::
+              {:ok, non_neg_integer(), term()} | {:error, term()}
+
+  @doc """
   Retrieves all rows from the specified table.
 
   Returns a list of rows (where each row is a list of values) and the adapter state.

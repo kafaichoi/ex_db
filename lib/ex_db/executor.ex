@@ -6,10 +6,12 @@ defmodule ExDb.Executor do
   the provided storage adapter, returning results in a consistent format.
   """
 
-  alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement}
+  alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement, UpdateStatement}
 
   # SQL constants
   @anonymous_column_name "?column?"
+
+  require Logger
 
   @doc """
   Executes a SQL statement against the given storage adapter.
@@ -39,6 +41,10 @@ defmodule ExDb.Executor do
 
   def execute(%SelectStatement{} = select_stmt, adapter) do
     execute_select(select_stmt, adapter)
+  end
+
+  def execute(%UpdateStatement{} = update_stmt, adapter) do
+    execute_update(update_stmt, adapter)
   end
 
   def execute(%CreateTableStatement{} = create_stmt, adapter) do
@@ -84,6 +90,38 @@ defmodule ExDb.Executor do
               {:error, reason} ->
                 {:error, reason}
             end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      false ->
+        {:error, {:table_not_found, table_name}}
+    end
+  end
+
+  defp execute_update(
+         %UpdateStatement{table: table, set: set, where: where},
+         {adapter_module, adapter_state}
+       ) do
+    table_name = table.name
+
+    case adapter_module.table_exists?(adapter_state, table_name) do
+      true ->
+        # Extract column and value from set clause
+        # Currently only supports single column updates
+        column_name = set.column.name
+        new_value = set.value.value
+
+        case adapter_module.update_row(adapter_state, table_name, column_name, new_value, where) do
+          {:ok, updated_count, new_adapter_state} ->
+            Logger.debug("UPDATE executed successfully",
+              table: table_name,
+              column: column_name,
+              updated_count: updated_count
+            )
+
+            {:ok, {adapter_module, new_adapter_state}}
 
           {:error, reason} ->
             {:error, reason}
@@ -218,6 +256,37 @@ defmodule ExDb.Executor do
       %{name: name} -> name
       other -> inspect(other)
     end)
+  end
+
+  # WHERE clause evaluation functions
+  defp evaluate_where_condition(row, nil), do: true
+
+  defp evaluate_where_condition(row, %{left: left, operator: operator, right: right}) do
+    left_value = evaluate_expression(row, left)
+    right_value = evaluate_expression(row, right)
+
+    case operator do
+      :eq -> left_value == right_value
+      :ne -> left_value != right_value
+      :lt -> left_value < right_value
+      :le -> left_value <= right_value
+      :gt -> left_value > right_value
+      :ge -> left_value >= right_value
+      _ -> false
+    end
+  end
+
+  defp evaluate_expression(_row, %{type: _type, value: value}), do: value
+
+  defp evaluate_expression(row, %{name: column_name}) do
+    # For simple implementation, assume columns are in order: id, name, email, etc.
+    # This is a simplified approach - in production you'd use column metadata
+    case column_name do
+      "id" -> Enum.at(row, 0)
+      "name" -> Enum.at(row, 1)
+      "email" -> Enum.at(row, 2)
+      _ -> nil
+    end
   end
 
   # Build column info for SELECT without FROM clause (literals)

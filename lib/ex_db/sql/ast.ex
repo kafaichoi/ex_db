@@ -96,6 +96,19 @@ defmodule ExDb.SQL.AST do
           }
   end
 
+  defmodule UpdateStatement do
+    @moduledoc """
+    Represents an UPDATE statement.
+    """
+    defstruct [:table, :set, :where]
+
+    @type t :: %__MODULE__{
+            table: Table.t(),
+            set: [%{column: Column.t(), value: Literal.t()}],
+            where: BinaryOp.t() | nil
+          }
+  end
+
   defmodule CreateTableStatement do
     @moduledoc """
     Represents a CREATE TABLE statement.

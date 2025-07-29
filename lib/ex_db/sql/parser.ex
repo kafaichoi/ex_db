@@ -10,6 +10,7 @@ defmodule ExDb.SQL.Parser do
   alias ExDb.SQL.AST.{
     SelectStatement,
     InsertStatement,
+    UpdateStatement,
     CreateTableStatement,
     ColumnDefinition,
     Table,
@@ -64,6 +65,9 @@ defmodule ExDb.SQL.Parser do
 
       %Token{type: :keyword, value: "CREATE"} ->
         parse_create_table_statement(parser)
+
+      %Token{type: :keyword, value: "UPDATE"} ->
+        parse_update_statement(parser)
 
       token ->
         {:error, "Unexpected token: #{inspect(token)}"}
@@ -128,6 +132,15 @@ defmodule ExDb.SQL.Parser do
     else
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp parse_update_statement(parser) do
+    with {:ok, parser} <- consume(parser, Token.update()),
+         {:ok, {table, parser}} <- parse_table_name(parser),
+         {:ok, {set, parser}} <- parse_set_clause(parser),
+         {:ok, {where, parser}} <- parse_optional_where(parser) do
+      {:ok, %UpdateStatement{table: table, set: set, where: where}}
     end
   end
 
@@ -282,6 +295,16 @@ defmodule ExDb.SQL.Parser do
     else
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp parse_set_clause(parser) do
+    with {:ok, parser} <- consume(parser, Token.set()),
+         # currently only support setting literal values on one column
+         {:ok, {column, parser}} <- parse_column_name(parser),
+         {:ok, parser} <- consume(parser, Token.equal()),
+         {:ok, {value, parser}} <- parse_literal_value(parser) do
+      {:ok, {%{column: %Column{name: column}, value: value}, parser}}
     end
   end
 

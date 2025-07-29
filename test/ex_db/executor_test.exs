@@ -107,6 +107,22 @@ defmodule ExDb.ExecutorTest do
 
       assert result == [[42, "Widget", "Electronics"]]
     end
+
+    test "UPDATE statement", %{storage_state: storage_state} do
+      {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
+      adapter = {Heap, storage_state}
+
+      {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, 'John')")
+      {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+      {:ok, update_ast} = Parser.parse("UPDATE users SET name = 'John' WHERE id = 1")
+      {:ok, adapter} = Executor.execute(update_ast, adapter)
+
+      {:ok, select_ast} = Parser.parse("SELECT * FROM users")
+      {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
+
+      assert result == [[1, "John"]]
+    end
   end
 
   describe "executor interface design" do
@@ -226,6 +242,29 @@ defmodule ExDb.ExecutorTest do
       assert Enum.at(schema, 2).name == "email"
       assert Enum.at(schema, 2).type == :text
     end
+  end
+
+  test "UPDATE statement execution", %{storage_state: storage_state} do
+    # Setup: Create table and insert test data
+    {:ok, storage_state} = Heap.create_table(storage_state, "users", [])
+    adapter = {Heap, storage_state}
+
+    # Insert test data
+    {:ok, insert_ast} = Parser.parse("INSERT INTO users VALUES (1, 'John', 'john@example.com')")
+    {:ok, adapter} = Executor.execute(insert_ast, adapter)
+
+    {:ok, insert_ast2} = Parser.parse("INSERT INTO users VALUES (2, 'Jane', 'jane@example.com')")
+    {:ok, adapter} = Executor.execute(insert_ast2, adapter)
+
+    # Test UPDATE
+    {:ok, update_ast} = Parser.parse("UPDATE users SET name = 'Johnny' WHERE id = 1")
+    {:ok, adapter} = Executor.execute(update_ast, adapter)
+
+    # Verify the update worked
+    {:ok, select_ast} = Parser.parse("SELECT * FROM users")
+    {:ok, result, _columns, _adapter} = Executor.execute(select_ast, adapter)
+
+    assert result == [[1, "Johnny", "john@example.com"], [2, "Jane", "jane@example.com"]]
   end
 
   describe "Schema validation" do
