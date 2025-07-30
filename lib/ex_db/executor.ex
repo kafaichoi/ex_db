@@ -7,7 +7,7 @@ defmodule ExDb.Executor do
   """
 
   alias ExDb.{QueryPlanner, QueryPlan}
-  alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement, UpdateStatement}
+  alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement}
 
   # SQL constants
   @anonymous_column_name "?column?"
@@ -37,6 +37,9 @@ defmodule ExDb.Executor do
   def execute(ast, adapter) do
     # Step 1: Create execution plan using QueryPlanner
     plan = QueryPlanner.plan(ast)
+
+    # Add operation metadata for correlation across logs
+    Logger.metadata(operation: plan.node_type, table: plan.relation)
 
     Logger.debug("Generated execution plan",
       node_type: plan.node_type,

@@ -139,7 +139,7 @@ defmodule ExDb.SQL.Parser do
     with {:ok, parser} <- consume(parser, Token.update()),
          {:ok, {table, parser}} <- parse_table_name(parser),
          {:ok, {set, parser}} <- parse_set_clause(parser),
-         {:ok, {where, parser}} <- parse_optional_where(parser) do
+         {:ok, {where, _parser}} <- parse_optional_where(parser) do
       {:ok, %UpdateStatement{table: table, set: set, where: where}}
     end
   end

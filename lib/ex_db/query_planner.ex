@@ -56,7 +56,7 @@ defmodule ExDb.QueryPlanner do
 
     # Analyze WHERE clause for index opportunities
     case analyze_where_for_indexes(where) do
-      {:index_candidate, index_type, index_column, condition} ->
+      {:index_candidate, index_type, index_column, _condition} ->
         # Future: Check if index actually exists
         # For now, fall back to table scan
         Logger.debug("Found potential index opportunity",
@@ -119,19 +119,6 @@ defmodule ExDb.QueryPlanner do
 
   # Helper functions
 
-  defp create_table_scan_plan(table_name, columns, where_condition) do
-    estimated_cost = estimate_table_scan_cost(table_name)
-    estimated_rows = estimate_table_rows(table_name)
-
-    QueryPlan.seq_scan(table_name, columns,
-      filter: where_condition,
-      cost_total: estimated_cost,
-      rows: estimated_rows,
-      # default row width estimate
-      width: 32
-    )
-  end
-
   defp analyze_where_for_indexes(nil), do: :no_index_opportunity
 
   defp analyze_where_for_indexes(%{left: left, operator: operator, right: right}) do
@@ -150,12 +137,6 @@ defmodule ExDb.QueryPlanner do
         # Complex conditions, functions, etc. - no index opportunity
         :no_index_opportunity
     end
-  end
-
-  defp estimate_table_scan_cost(_table_name) do
-    # Future: Use table statistics to estimate cost
-    # For now, return a simple default
-    100.0
   end
 
   defp estimate_table_rows(_table_name) do
