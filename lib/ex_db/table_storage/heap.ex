@@ -19,6 +19,7 @@ defmodule ExDb.TableStorage.Heap do
   @behaviour ExDb.TableStorage.Adapter
 
   alias ExDb.TableStorage.{Page, PageManager}
+  alias ExDb.BufferManager
   require Logger
 
   defstruct [
@@ -128,32 +129,34 @@ defmodule ExDb.TableStorage.Heap do
         tuple_size = byte_size(tuple_data)
 
         # Find a page with enough space or create a new one
-        case find_or_create_page_with_space(table_name, tuple_size) do
+        case find_or_create_page_with_space_buffered(table_name, tuple_size) do
           {:ok, page_number, page} ->
             # Add tuple to the page
             case Page.add_tuple(page, row_id, values) do
               {:ok, updated_page} ->
-                # Write the updated page back to file
-                case PageManager.write_page(table_name, page_number, updated_page) do
+                # Mark page as dirty in buffer manager (write-back caching)
+                case BufferManager.mark_dirty(table_name, page_number, updated_page) do
                   :ok ->
+                    BufferManager.unpin_page(table_name, page_number)
                     # Update table metadata
                     update_table_metadata(table_name, %{metadata | total_tuples: row_id})
 
                     Logger.debug("Inserted row into paged heap",
                       table: table_name,
                       row_id: row_id,
-                      page: page_number,
-                      values: values
+                      page: page_number
                     )
 
                     {:ok, state}
 
                   {:error, reason} ->
-                    {:error, {:page_write_error, reason}}
+                    BufferManager.unpin_page(table_name, page_number)
+                    {:error, {:buffer_write_error, reason}}
                 end
 
               {:error, :no_space} ->
                 # This shouldn't happen since we checked space, but handle gracefully
+                BufferManager.unpin_page(table_name, page_number)
                 {:error, {:unexpected_no_space, page_number}}
             end
 
@@ -174,11 +177,13 @@ defmodule ExDb.TableStorage.Heap do
         rows =
           1..(page_count - 1)
           |> Enum.flat_map(fn page_num ->
-            case PageManager.read_page(table_name, page_num) do
+            case BufferManager.get_page(table_name, page_num) do
               {:ok, page} ->
-                Page.get_all_tuples(page)
+                tuples = Page.get_all_tuples(page)
+                # Unpin page after reading
+                BufferManager.unpin_page(table_name, page_num)
                 # Return just values
-                |> Enum.map(fn {_row_id, values} -> values end)
+                tuples |> Enum.map(fn {_row_id, values} -> values end)
 
               {:error, _reason} ->
                 Logger.warning("Failed to read page during select",
@@ -285,7 +290,7 @@ defmodule ExDb.TableStorage.Heap do
   # Private helper functions
 
   defp update_page_rows(table_name, page_num, column_name, new_value, where_condition) do
-    case PageManager.read_page(table_name, page_num) do
+    case BufferManager.get_page(table_name, page_num) do
       {:ok, page} ->
         # Get all tuples from the page
         tuples = Page.get_all_tuples(page)
@@ -319,11 +324,18 @@ defmodule ExDb.TableStorage.Heap do
               end
             end)
 
-          case PageManager.write_page(table_name, page_num, final_page) do
-            :ok -> {:ok, update_count}
-            {:error, reason} -> {:error, reason}
+          # Use BufferManager for consistency with reads
+          case BufferManager.mark_dirty(table_name, page_num, final_page) do
+            :ok ->
+              BufferManager.unpin_page(table_name, page_num)
+              {:ok, update_count}
+
+            {:error, reason} ->
+              BufferManager.unpin_page(table_name, page_num)
+              {:error, reason}
           end
         else
+          BufferManager.unpin_page(table_name, page_num)
           {:ok, 0}
         end
 
@@ -378,10 +390,12 @@ defmodule ExDb.TableStorage.Heap do
   end
 
   defp get_table_metadata(table_name) do
-    case PageManager.read_page(table_name, 0) do
+    case BufferManager.get_page(table_name, 0) do
       {:ok, header_page} ->
         # Extract metadata from header page (stored as first tuple)
         tuples = Page.get_all_tuples(header_page)
+        # Unpin header page after reading
+        BufferManager.unpin_page(table_name, 0)
 
         case tuples do
           [{0, [metadata]} | _] ->
@@ -405,7 +419,7 @@ defmodule ExDb.TableStorage.Heap do
   end
 
   defp update_table_metadata(table_name, metadata) do
-    case PageManager.read_page(table_name, 0) do
+    case BufferManager.get_page(table_name, 0) do
       {:ok, _header_page} ->
         # Remove existing metadata tuple and add updated one
         # For simplicity, we'll recreate the header page with new metadata
@@ -413,9 +427,19 @@ defmodule ExDb.TableStorage.Heap do
 
         case Page.add_tuple(new_header, 0, [metadata]) do
           {:ok, updated_header} ->
-            PageManager.write_page(table_name, 0, updated_header)
+            # Use BufferManager for consistency with reads
+            case BufferManager.mark_dirty(table_name, 0, updated_header) do
+              :ok ->
+                BufferManager.unpin_page(table_name, 0)
+                :ok
+
+              {:error, reason} ->
+                BufferManager.unpin_page(table_name, 0)
+                {:error, {:metadata_update_error, reason}}
+            end
 
           {:error, reason} ->
+            BufferManager.unpin_page(table_name, 0)
             {:error, {:metadata_update_error, reason}}
         end
 
@@ -424,25 +448,39 @@ defmodule ExDb.TableStorage.Heap do
     end
   end
 
-  defp find_or_create_page_with_space(table_name, tuple_size) do
+  defp find_or_create_page_with_space_buffered(table_name, tuple_size) do
     case PageManager.find_page_with_space(table_name, tuple_size) do
-      {:ok, page_number, page} ->
-        {:ok, page_number, page}
+      {:ok, page_number, _page} ->
+        # Found existing page with space, get it through buffer manager
+        case BufferManager.get_page(table_name, page_number) do
+          {:ok, buffered_page} ->
+            # Double-check space in the cached version (might be different from disk)
+            if Page.has_space_for?(buffered_page, tuple_size) do
+              {:ok, page_number, buffered_page}
+            else
+              # Cached version is full, unpin and create new page
+              BufferManager.unpin_page(table_name, page_number)
+              create_new_data_page_buffered(table_name)
+            end
+
+          {:error, reason} ->
+            {:error, {:buffer_get_error, reason}}
+        end
 
       {:error, :no_data_pages} ->
         # No data pages exist yet, create first data page
-        create_new_data_page(table_name)
+        create_new_data_page_buffered(table_name)
 
       {:error, :no_space} ->
         # All existing pages are full, create a new one
-        create_new_data_page(table_name)
+        create_new_data_page_buffered(table_name)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp create_new_data_page(table_name) do
+  defp create_new_data_page_buffered(table_name) do
     case PageManager.get_page_count(table_name) do
       {:ok, page_count} ->
         # Create new page with page_id = page_count (next available page number)
@@ -456,7 +494,14 @@ defmodule ExDb.TableStorage.Heap do
               total_pages: page_count + 1
             )
 
-            {:ok, page_number, new_page}
+            # Get the page through buffer manager to ensure it's cached and pinned
+            case BufferManager.get_page(table_name, page_number) do
+              {:ok, buffered_page} ->
+                {:ok, page_number, buffered_page}
+
+              {:error, reason} ->
+                {:error, {:buffer_get_error, reason}}
+            end
 
           {:error, reason} ->
             {:error, {:page_creation_error, reason}}

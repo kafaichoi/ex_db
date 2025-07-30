@@ -4,7 +4,10 @@ defmodule ExDb.TableStorage.HeapTest do
   alias ExDb.TableStorage.Heap
 
   setup do
-    # Clean up test data directories before each test
+    # Clear buffer manager cache BEFORE deleting files to avoid flush errors
+    ExDb.BufferManager.clear_cache()
+
+    # Clean up test data directories after clearing cache
     for dir <- ["data/pages", "data/heap"] do
       if File.exists?(dir) do
         File.rm_rf!(dir)

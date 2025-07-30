@@ -9,7 +9,10 @@ defmodule ExDb.ExecutorTest do
   @moduletag :integration
 
   setup do
-    # Clean up test data directories before each test
+    # Clear buffer manager cache BEFORE deleting files to avoid data contamination
+    ExDb.BufferManager.clear_cache()
+
+    # Clean up test data directories after clearing cache
     for dir <- ["data/heap", "data/pages"] do
       if File.exists?(dir) do
         File.rm_rf!(dir)

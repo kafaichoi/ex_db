@@ -8,8 +8,8 @@ defmodule ExDb.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Starts a worker by calling: ExDb.Worker.start_link(arg)
-      # {ExDb.Worker, arg}
+      # Buffer manager must start before server
+      ExDb.BufferManager,
       ExDb.Server
     ]
 
