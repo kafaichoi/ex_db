@@ -1,6 +1,6 @@
 import Config
 
-# Test configuration
+# DefauTest configuration
 config :ex_db,
   # Different port for testing to avoid conflicts
-  port: 5433
+  port: 5533

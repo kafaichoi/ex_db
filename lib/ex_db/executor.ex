@@ -6,6 +6,7 @@ defmodule ExDb.Executor do
   the provided storage adapter, returning results in a consistent format.
   """
 
+  alias ExDb.{QueryPlanner, QueryPlan}
   alias ExDb.SQL.AST.{InsertStatement, SelectStatement, CreateTableStatement, UpdateStatement}
 
   # SQL constants
@@ -33,30 +34,49 @@ defmodule ExDb.Executor do
           {:ok, {module(), any()}}
           | {:ok, list(list()), list(map()), {module(), any()}}
           | {:error, any()}
-  def execute(ast, adapter)
+  def execute(ast, adapter) do
+    # Step 1: Create execution plan using QueryPlanner
+    plan = QueryPlanner.plan(ast)
 
-  def execute(%InsertStatement{} = insert_stmt, adapter) do
-    execute_insert(insert_stmt, adapter)
+    Logger.debug("Generated execution plan",
+      node_type: plan.node_type,
+      relation: plan.relation,
+      cost_total: plan.cost_total
+    )
+
+    # Step 2: Execute the plan
+    execute_plan(plan, adapter)
   end
 
-  def execute(%SelectStatement{} = select_stmt, adapter) do
-    execute_select(select_stmt, adapter)
+  # Plan-based execution functions
+  defp execute_plan(%QueryPlan.Node{node_type: :seq_scan} = plan, adapter) do
+    execute_select_plan(plan, adapter)
   end
 
-  def execute(%UpdateStatement{} = update_stmt, adapter) do
-    execute_update(update_stmt, adapter)
+  defp execute_plan(%QueryPlan.Node{node_type: :index_scan} = plan, adapter) do
+    # Future: Index-based execution
+    # For now, fall back to table scan
+    execute_select_plan(plan, adapter)
   end
 
-  def execute(%CreateTableStatement{} = create_stmt, adapter) do
-    execute_create_table(create_stmt, adapter)
+  defp execute_plan(%QueryPlan.Node{node_type: :insert} = plan, adapter) do
+    execute_insert_plan(plan, adapter)
   end
 
-  # Private functions for handling specific statement types
-  defp execute_insert(
-         %InsertStatement{table: table, values: values},
+  defp execute_plan(%QueryPlan.Node{node_type: :update} = plan, adapter) do
+    execute_update_plan(plan, adapter)
+  end
+
+  defp execute_plan(%QueryPlan.Node{node_type: :create_table} = plan, adapter) do
+    execute_create_table_plan(plan, adapter)
+  end
+
+  # Private functions for handling specific plan types
+  defp execute_insert_plan(
+         %QueryPlan.Node{node_type: :insert, relation: table_name, target_list: values},
          {adapter_module, adapter_state}
        ) do
-    table_name = table.name
+    # table_name already extracted from plan
 
     case adapter_module.table_exists?(adapter_state, table_name) do
       true ->
@@ -100,11 +120,16 @@ defmodule ExDb.Executor do
     end
   end
 
-  defp execute_update(
-         %UpdateStatement{table: table, set: set, where: where},
+  defp execute_update_plan(
+         %QueryPlan.Node{
+           node_type: :update,
+           relation: table_name,
+           target_list: [set],
+           filter: where
+         },
          {adapter_module, adapter_state}
        ) do
-    table_name = table.name
+    # table_name already extracted from plan
 
     case adapter_module.table_exists?(adapter_state, table_name) do
       true ->
@@ -116,7 +141,7 @@ defmodule ExDb.Executor do
         case adapter_module.update_row(adapter_state, table_name, column_name, new_value, where) do
           {:ok, updated_count, new_adapter_state} ->
             Logger.debug("UPDATE executed successfully",
-              table: table_name,
+              relation: table_name,
               column: column_name,
               updated_count: updated_count
             )
@@ -132,11 +157,17 @@ defmodule ExDb.Executor do
     end
   end
 
-  defp execute_select(
-         %SelectStatement{from: table, columns: columns, where: where},
+  defp execute_select_plan(
+         %QueryPlan.Node{
+           node_type: plan_type,
+           relation: table_name,
+           target_list: columns,
+           filter: where
+         },
          {adapter_module, adapter_state}
-       ) do
-    case table do
+       )
+       when plan_type in [:seq_scan, :index_scan] do
+    case table_name do
       nil ->
         # SELECT without FROM clause (e.g., "SELECT 1")
         # Evaluate the literals directly
@@ -144,7 +175,7 @@ defmodule ExDb.Executor do
         column_info = build_literal_column_info(columns)
         {:ok, [row], column_info, {adapter_module, adapter_state}}
 
-      %{name: table_name} ->
+      table_name when is_binary(table_name) ->
         # SELECT with FROM clause
         case adapter_module.table_exists?(adapter_state, table_name) do
           true ->
@@ -169,11 +200,11 @@ defmodule ExDb.Executor do
     end
   end
 
-  defp execute_create_table(
-         %CreateTableStatement{table: table, columns: columns},
+  defp execute_create_table_plan(
+         %QueryPlan.Node{node_type: :create_table, relation: table_name, target_list: columns},
          {adapter_module, adapter_state}
        ) do
-    table_name = table.name
+    # table_name already extracted from plan
 
     case adapter_module.table_exists?(adapter_state, table_name) do
       true ->
@@ -253,7 +284,7 @@ defmodule ExDb.Executor do
   # Helper to evaluate literal values in SELECT without FROM
   defp evaluate_literals(columns) do
     Enum.map(columns, fn
-      %{type: :number, value: value} -> value
+      %{type: :number, value: value} -> to_string(value)
       %{type: :string, value: value} -> value
       %{name: "*"} -> "*"
       %{name: name} -> name
@@ -310,11 +341,11 @@ defmodule ExDb.Executor do
   # Build column info for SELECT without FROM clause (literals)
   defp build_literal_column_info(columns) do
     Enum.map(columns, fn
-      %{type: :number} -> %{name: @anonymous_column_name, type: :integer}
-      %{type: :string} -> %{name: @anonymous_column_name, type: :text}
-      %{type: :boolean} -> %{name: @anonymous_column_name, type: :boolean}
-      %{name: name} -> %{name: name, type: :text}
-      _ -> %{name: @anonymous_column_name, type: :text}
+      %{node_type: :number} -> %{name: @anonymous_column_name, node_type: :integer}
+      %{node_type: :string} -> %{name: @anonymous_column_name, node_type: :text}
+      %{node_type: :boolean} -> %{name: @anonymous_column_name, node_type: :boolean}
+      %{name: name} -> %{name: name, node_type: :text}
+      _ -> %{name: @anonymous_column_name, node_type: :text}
     end)
   end
 
@@ -341,20 +372,20 @@ defmodule ExDb.Executor do
       %{name: "*"} ->
         # SELECT * - return all columns from schema
         Enum.map(schema, fn col_def ->
-          %{name: col_def.name, type: col_def.type}
+          %{name: col_def.name, node_type: col_def.type}
         end)
 
       %{name: column_name} ->
         # SELECT specific_column - find it in schema
         case Enum.find(schema, fn col_def -> col_def.name == column_name end) do
           # Column not found in schema
-          nil -> %{name: column_name, type: :text}
-          col_def -> %{name: col_def.name, type: col_def.type}
+          nil -> %{name: column_name, node_type: :text}
+          col_def -> %{name: col_def.name, node_type: col_def.type}
         end
 
       _ ->
         # Literal in SELECT list
-        %{name: @anonymous_column_name, type: :text}
+        %{name: @anonymous_column_name, node_type: :text}
     end)
     |> List.flatten()
   end
@@ -362,9 +393,9 @@ defmodule ExDb.Executor do
   # Build generic column info when no schema is available
   defp build_generic_column_info(columns) do
     Enum.map(columns, fn
-      %{name: "*"} -> %{name: @anonymous_column_name, type: :text}
-      %{name: column_name} -> %{name: column_name, type: :text}
-      _ -> %{name: @anonymous_column_name, type: :text}
+      %{name: "*"} -> %{name: @anonymous_column_name, node_type: :text}
+      %{name: column_name} -> %{name: column_name, node_type: :text}
+      _ -> %{name: @anonymous_column_name, node_type: :text}
     end)
   end
 end

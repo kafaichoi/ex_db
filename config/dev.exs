@@ -1,5 +1,5 @@
 import Config
 
-# Development configuration
+# Default Development configuration
 config :ex_db,
-  port: 5432
+  port: 5532
